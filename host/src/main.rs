@@ -61,15 +61,38 @@ fn deny(reason: &str) -> ! {
     std::process::exit(2);
 }
 
-fn main() -> Result<()> {
-    let o = parse_args()?;
+/// Load a plugin, reusing a cached native compilation when the bytes haven't changed.
+fn load_module(engine: &Engine, path: &str) -> Result<Module> {
+    use std::hash::{Hash, Hasher};
+    let bytes = std::fs::read(path).map_err(|e| anyhow!("could not load {path}: {e}"))?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    engine.precompile_compatibility_hash().hash(&mut h);
+    let base = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("codecage").join("cache");
+    let cached = dir.join(format!("{:016x}.cwasm", h.finish()));
+    if cached.exists() {
+        // SAFETY: the cache file was written by this program for this exact engine config.
+        if let Ok(m) = unsafe { Module::deserialize_file(engine, &cached) } {
+            return Ok(m);
+        }
+    }
+    let module = Module::new(engine, &bytes).map_err(|e| anyhow!("could not load {path}: {e}"))?;
+    if std::fs::create_dir_all(&dir).is_ok() {
+        if let Ok(ser) = module.serialize() {
+            let _ = std::fs::write(&cached, ser);
+        }
+    }
+    Ok(module)
+}
+
+fn main() -> Result<()> {    let o = parse_args()?;
 
     let mut config = Config::new();
     config.consume_fuel(true);
     config.epoch_interruption(true);
     let engine = Engine::new(&config).map_err(anyhow::Error::from)?;
-    let module = Module::from_file(&engine, &o.plugin)
-        .map_err(|e| anyhow!("could not load {}: {e}", o.plugin))?;
+    let module = load_module(&engine, &o.plugin)?;
 
     let mut linker: Linker<State> = Linker::new(&engine);
     p1::add_to_linker_sync(&mut linker, |s: &mut State| &mut s.wasi).map_err(anyhow::Error::from)?;
