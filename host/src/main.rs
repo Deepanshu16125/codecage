@@ -1,9 +1,10 @@
 //! CodeCage: run untrusted WASI plugins inside a locked-down sandbox.
 use anyhow::{anyhow, bail, Result};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
-use wasmtime_wasi::WasiCtxBuilder;
+use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 struct State {
     wasi: WasiP1Ctx,
@@ -24,18 +25,31 @@ impl ResourceLimiter for State {
     }
 }
 
+struct AllowDir {
+    host: PathBuf,
+    guest: String,
+    write: bool,
+}
+
 struct RunOpts {
     plugin: String,
     fuel: u64,
     memory_mb: usize,
     timeout_ms: u64,
     no_fuel: bool,
+    dirs: Vec<AllowDir>,
 }
 
-const USAGE: &str = "usage: codecage run <plugin.wasm> [--fuel N] [--memory-mb N] [--timeout-ms N] [--no-fuel]
+const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
 
-defaults: --fuel 50000000  --memory-mb 64  --timeout-ms 2000
---no-fuel skips the CPU budget (faster); timeout, memory and deny-by-default still apply
+options:
+  --fuel N            CPU budget (default 50000000)
+  --memory-mb N       memory cap in MiB (default 64)
+  --timeout-ms N      wall-clock timeout (default 2000)
+  --no-fuel           skip fuel; timeout still applies
+  --allow-dir PATH    grant read-only access (guest path /data, or /data0 /data1 …)
+  --allow-write-dir PATH  grant read-write access (same guest naming)
+
 by default a plugin gets no files, no network, and no environment variables.";
 
 fn parse_args() -> Result<RunOpts> {
@@ -49,6 +63,7 @@ fn parse_args() -> Result<RunOpts> {
         memory_mb: 64,
         timeout_ms: 2000,
         no_fuel: false,
+        dirs: Vec::new(),
     };
     let mut i = 2;
     while i < args.len() {
@@ -62,9 +77,35 @@ fn parse_args() -> Result<RunOpts> {
             "--fuel" => o.fuel = val.parse()?,
             "--memory-mb" => o.memory_mb = val.parse()?,
             "--timeout-ms" => o.timeout_ms = val.parse()?,
+            "--allow-dir" => {
+                o.dirs.push(AllowDir {
+                    host: PathBuf::from(val),
+                    guest: String::new(),
+                    write: false,
+                });
+            }
+            "--allow-write-dir" => {
+                o.dirs.push(AllowDir {
+                    host: PathBuf::from(val),
+                    guest: String::new(),
+                    write: true,
+                });
+            }
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
         i += 2;
+    }
+    // Assign stable guest paths: one dir -> /data, several -> /data0 /data1 …
+    let n = o.dirs.len();
+    for (idx, d) in o.dirs.iter_mut().enumerate() {
+        d.guest = if n == 1 {
+            "/data".into()
+        } else {
+            format!("/data{idx}")
+        };
+        if !d.host.is_dir() {
+            bail!("--allow-dir path is not a directory: {}", d.host.display());
+        }
     }
     Ok(o)
 }
@@ -101,6 +142,27 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     Ok(module)
 }
 
+fn build_wasi(dirs: &[AllowDir]) -> Result<WasiP1Ctx> {
+    let mut b = WasiCtxBuilder::new();
+    b.inherit_stdout().inherit_stderr();
+    for d in dirs {
+        let perms = if d.write {
+            FsPerms::ReadWrite
+        } else {
+            FsPerms::ReadOnly
+        };
+        b.preopened_dir(Path::new(&d.host), &d.guest, perms)
+            .map_err(|e| anyhow!("preopen {}: {e}", d.host.display()))?;
+        eprintln!(
+            "[codecage] allowed {} -> {} ({})",
+            d.host.display(),
+            d.guest,
+            if d.write { "read-write" } else { "read-only" }
+        );
+    }
+    Ok(b.build_p1())
+}
+
 fn main() -> Result<()> {
     let o = parse_args()?;
 
@@ -113,8 +175,7 @@ fn main() -> Result<()> {
     let mut linker: Linker<State> = Linker::new(&engine);
     p1::add_to_linker_sync(&mut linker, |s: &mut State| &mut s.wasi).map_err(anyhow::Error::from)?;
 
-    // Deny by default: only stdout/stderr, no preopened dirs, no env, no network.
-    let wasi = WasiCtxBuilder::new().inherit_stdout().inherit_stderr().build_p1();
+    let wasi = build_wasi(&o.dirs)?;
     let limits = StoreLimitsBuilder::new()
         .memory_size(o.memory_mb * 1024 * 1024)
         .instances(1)
@@ -133,7 +194,6 @@ fn main() -> Result<()> {
     }
     store.set_epoch_deadline(1);
 
-    // Watchdog: bump the epoch once the wall-clock timeout passes.
     let eng = engine.clone();
     let timeout = Duration::from_millis(o.timeout_ms);
     std::thread::spawn(move || {

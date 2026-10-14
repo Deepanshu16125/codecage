@@ -1,6 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["host", "plugins/hello", "plugins/infinite_loop", "plugins/mem_bomb", "plugins/primes"]
+members = [
+  "host",
+  "plugins/hello",
+  "plugins/infinite_loop",
+  "plugins/mem_bomb",
+  "plugins/primes",
+  "plugins/linecount",
+  "plugins/read_ssh",
+  "plugins/escape_preopen",
+  "plugins/env_snoop", "plugins/try_write", "plugins/try_write",
+]
 
 [profile.release]
 opt-level = 3
@@ -8,3 +18,4 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+

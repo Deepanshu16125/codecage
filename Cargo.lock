@@ -445,6 +445,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_snoop"
+version = "0.1.0"
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -459,6 +463,10 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "escape_preopen"
+version = "0.1.0"
 
 [[package]]
 name = "fastrand"
@@ -913,6 +921,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "linecount"
+version = "0.1.0"
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1132,6 +1144,10 @@ dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
 ]
+
+[[package]]
+name = "read_ssh"
+version = "0.1.0"
 
 [[package]]
 name = "redox_users"
@@ -1516,6 +1532,10 @@ checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
 ]
+
+[[package]]
+name = "try_write"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"
