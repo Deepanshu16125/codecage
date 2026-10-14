@@ -3,7 +3,11 @@ name = "host"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "codecage"
+path = "src/main.rs"
+
 [dependencies]
-anyhow = "1.0.104"
+anyhow = "1"
 wasmtime = "49"
 wasmtime-wasi = "49"
