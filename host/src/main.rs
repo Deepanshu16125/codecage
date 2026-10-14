@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
 struct State {
@@ -37,6 +38,7 @@ struct RunOpts {
     memory_mb: usize,
     timeout_ms: u64,
     no_fuel: bool,
+    max_output_kb: usize,
     dirs: Vec<AllowDir>,
 }
 
@@ -47,6 +49,7 @@ options:
   --memory-mb N       memory cap in MiB (default 64)
   --timeout-ms N      wall-clock timeout (default 2000)
   --no-fuel           skip fuel; timeout still applies
+  --max-output-kb N   cap on stdout/stderr each (default 1024)
   --allow-dir PATH    grant read-only access (guest path /data, or /data0 /data1 …)
   --allow-write-dir PATH  grant read-write access (same guest naming)
 
@@ -63,6 +66,7 @@ fn parse_args() -> Result<RunOpts> {
         memory_mb: 64,
         timeout_ms: 2000,
         no_fuel: false,
+        max_output_kb: 1024,
         dirs: Vec::new(),
     };
     let mut i = 2;
@@ -77,6 +81,7 @@ fn parse_args() -> Result<RunOpts> {
             "--fuel" => o.fuel = val.parse()?,
             "--memory-mb" => o.memory_mb = val.parse()?,
             "--timeout-ms" => o.timeout_ms = val.parse()?,
+            "--max-output-kb" => o.max_output_kb = val.parse()?,
             "--allow-dir" => {
                 o.dirs.push(AllowDir {
                     host: PathBuf::from(val),
@@ -142,9 +147,9 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     Ok(module)
 }
 
-fn build_wasi(dirs: &[AllowDir]) -> Result<WasiP1Ctx> {
+fn build_wasi(dirs: &[AllowDir], out: &MemoryOutputPipe, err: &MemoryOutputPipe) -> Result<WasiP1Ctx> {
     let mut b = WasiCtxBuilder::new();
-    b.inherit_stdout().inherit_stderr();
+    b.stdout(out.clone()).stderr(err.clone());
     for d in dirs {
         let perms = if d.write {
             FsPerms::ReadWrite
@@ -175,7 +180,10 @@ fn main() -> Result<()> {
     let mut linker: Linker<State> = Linker::new(&engine);
     p1::add_to_linker_sync(&mut linker, |s: &mut State| &mut s.wasi).map_err(anyhow::Error::from)?;
 
-    let wasi = build_wasi(&o.dirs)?;
+    let cap = o.max_output_kb * 1024;
+    let out_pipe = MemoryOutputPipe::new(cap);
+    let err_pipe = MemoryOutputPipe::new(cap);
+    let wasi = build_wasi(&o.dirs, &out_pipe, &err_pipe)?;
     let limits = StoreLimitsBuilder::new()
         .memory_size(o.memory_mb * 1024 * 1024)
         .instances(1)
@@ -199,6 +207,9 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         std::thread::sleep(timeout);
         eng.increment_epoch();
+        // A plugin blocked inside a host call (e.g. sleep) can't see the epoch; give it a grace period, then hard-stop.
+        std::thread::sleep(Duration::from_millis(250));
+        deny(&format!("timeout after {} ms (plugin was blocked in a host call)", timeout.as_millis()));
     });
 
     let started = Instant::now();
@@ -207,6 +218,16 @@ fn main() -> Result<()> {
         .and_then(|inst| inst.get_typed_func::<(), ()>(&mut store, "_start"))
         .and_then(|start| start.call(&mut store, ()));
     let elapsed = started.elapsed();
+    {
+        use std::io::Write;
+        let o_bytes = out_pipe.contents();
+        let e_bytes = err_pipe.contents();
+        let _ = std::io::stdout().write_all(&o_bytes);
+        let _ = std::io::stderr().write_all(&e_bytes);
+        if o_bytes.len() >= cap || e_bytes.len() >= cap {
+            deny(&format!("output limit of {} KiB exceeded", o.max_output_kb));
+        }
+    }
     let used = if o.no_fuel {
         None
     } else {
