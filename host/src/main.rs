@@ -29,11 +29,13 @@ struct RunOpts {
     fuel: u64,
     memory_mb: usize,
     timeout_ms: u64,
+    no_fuel: bool,
 }
 
-const USAGE: &str = "usage: codecage run <plugin.wasm> [--fuel N] [--memory-mb N] [--timeout-ms N]
+const USAGE: &str = "usage: codecage run <plugin.wasm> [--fuel N] [--memory-mb N] [--timeout-ms N] [--no-fuel]
 
 defaults: --fuel 50000000  --memory-mb 64  --timeout-ms 2000
+--no-fuel skips the CPU budget (faster); timeout, memory and deny-by-default still apply
 by default a plugin gets no files, no network, and no environment variables.";
 
 fn parse_args() -> Result<RunOpts> {
@@ -41,9 +43,20 @@ fn parse_args() -> Result<RunOpts> {
     if args.first().map(String::as_str) != Some("run") || args.len() < 2 {
         bail!("{USAGE}");
     }
-    let mut o = RunOpts { plugin: args[1].clone(), fuel: 50_000_000, memory_mb: 64, timeout_ms: 2000 };
+    let mut o = RunOpts {
+        plugin: args[1].clone(),
+        fuel: 50_000_000,
+        memory_mb: 64,
+        timeout_ms: 2000,
+        no_fuel: false,
+    };
     let mut i = 2;
     while i < args.len() {
+        if args[i] == "--no-fuel" {
+            o.no_fuel = true;
+            i += 1;
+            continue;
+        }
         let val = args.get(i + 1).ok_or_else(|| anyhow!("missing value for {}", args[i]))?;
         match args[i].as_str() {
             "--fuel" => o.fuel = val.parse()?,
@@ -68,7 +81,9 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
     engine.precompile_compatibility_hash().hash(&mut h);
-    let base = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("codecage").join("cache");
     let cached = dir.join(format!("{:016x}.cwasm", h.finish()));
     if cached.exists() {
@@ -86,10 +101,11 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     Ok(module)
 }
 
-fn main() -> Result<()> {    let o = parse_args()?;
+fn main() -> Result<()> {
+    let o = parse_args()?;
 
     let mut config = Config::new();
-    config.consume_fuel(true);
+    config.consume_fuel(!o.no_fuel);
     config.epoch_interruption(true);
     let engine = Engine::new(&config).map_err(anyhow::Error::from)?;
     let module = load_module(&engine, &o.plugin)?;
@@ -103,9 +119,18 @@ fn main() -> Result<()> {    let o = parse_args()?;
         .memory_size(o.memory_mb * 1024 * 1024)
         .instances(1)
         .build();
-    let mut store = Store::new(&engine, State { wasi, limits, memory_denied: false });
+    let mut store = Store::new(
+        &engine,
+        State {
+            wasi,
+            limits,
+            memory_denied: false,
+        },
+    );
     store.limiter(|s| s);
-    store.set_fuel(o.fuel).map_err(anyhow::Error::from)?;
+    if !o.no_fuel {
+        store.set_fuel(o.fuel).map_err(anyhow::Error::from)?;
+    }
     store.set_epoch_deadline(1);
 
     // Watchdog: bump the epoch once the wall-clock timeout passes.
@@ -122,7 +147,11 @@ fn main() -> Result<()> {    let o = parse_args()?;
         .and_then(|inst| inst.get_typed_func::<(), ()>(&mut store, "_start"))
         .and_then(|start| start.call(&mut store, ()));
     let elapsed = started.elapsed();
-    let used = o.fuel - store.get_fuel().unwrap_or(0);
+    let used = if o.no_fuel {
+        None
+    } else {
+        Some(o.fuel - store.get_fuel().unwrap_or(0))
+    };
 
     if let Err(e) = result {
         if let Some(exit) = e.downcast_ref::<wasmtime_wasi::I32Exit>() {
@@ -143,6 +172,15 @@ fn main() -> Result<()> {    let o = parse_args()?;
             }
         }
     }
-    eprintln!("[codecage] ok: fuel used {used}, time {} ms", elapsed.as_millis());
+    match used {
+        Some(u) => eprintln!(
+            "[codecage] ok: fuel used {u}, time {} ms",
+            elapsed.as_millis()
+        ),
+        None => eprintln!(
+            "[codecage] ok: fuel off (timeout-only), time {} ms",
+            elapsed.as_millis()
+        ),
+    }
     Ok(())
 }
