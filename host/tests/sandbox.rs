@@ -42,6 +42,7 @@ fn cage(name: &str, extra: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_codecage"))
         .current_dir(root())
         .env("SECRET_TOKEN", "hunter2")
+        .env("CODECAGE_LOG", root().join("target").join("test-audit.log"))
         .args(&args)
         .output()
         .expect("run codecage")
@@ -131,4 +132,24 @@ fn output_flood_capped() {
 #[test]
 fn sleep_forever_times_out() {
     assert_denied(&cage("sleep_forever", &["--timeout-ms", "500"]), "timeout");
+}
+#[test]
+fn audit_records_denials() {
+    let log = std::env::temp_dir().join(format!("codecage-audit-test-{}.log", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    build_plugins();
+    let bin = env!("CARGO_BIN_EXE_codecage");
+    for (p, extra) in [("hello", vec![]), ("infinite_loop", vec![]), ("mem_bomb", vec!["--no-fuel"])] {
+        let pp = plugin(p);
+        let mut a = vec!["run", pp.as_str()];
+        a.extend(extra);
+        Command::new(bin).env("CODECAGE_LOG", &log).args(&a).output().unwrap();
+    }
+    let o = Command::new(bin).env("CODECAGE_LOG", &log).arg("audit").output().unwrap();
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{s}");
+    assert!(s.contains("hello") && s.contains("infinite_loop") && s.contains("mem_bomb"), "{s}");
+    assert!(s.contains("cpu (fuel)") && s.contains("memory"), "{s}");
+    assert!(s.contains("TOTAL                  3     1       2"), "{s}");
+    let _ = std::fs::remove_file(&log);
 }

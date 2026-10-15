@@ -43,6 +43,7 @@ struct RunOpts {
 }
 
 const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
+       codecage audit [--plugin NAME] [--clear]
 
 options:
   --fuel N            CPU budget (default 50000000)
@@ -115,11 +116,123 @@ fn parse_args() -> Result<RunOpts> {
     Ok(o)
 }
 
+static PLUGIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Where run/deny events are appended. Override with CODECAGE_LOG.
+fn log_path() -> PathBuf {
+    if let Some(p) = std::env::var_os("CODECAGE_LOG") {
+        return PathBuf::from(p);
+    }
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("codecage")
+        .join("audit.log")
+}
+
+/// Append one tab-separated event: unix_secs, plugin, outcome, detail.
+fn log_event(outcome: &str, detail: &str) {
+    use std::io::Write;
+    let path = log_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let plugin = PLUGIN.get().map(String::as_str).unwrap_or("?");
+    let clean = detail.replace(['\t', '\n', '\r'], " ");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{ts}\t{plugin}\t{outcome}\t{clean}");
+    }
+}
+
 fn deny(reason: &str) -> ! {
+    log_event("DENIED", reason);
     eprintln!("[codecage] DENIED: {reason}");
     std::process::exit(2);
 }
 
+/// Short category for a denial reason, used by `codecage audit`.
+fn category(reason: &str) -> &'static str {
+    if reason.contains("fuel") {
+        "cpu (fuel)"
+    } else if reason.contains("timeout") {
+        "timeout"
+    } else if reason.contains("memory") {
+        "memory"
+    } else if reason.contains("output") {
+        "output"
+    } else {
+        "trap/other"
+    }
+}
+
+fn run_audit(args: &[String]) -> Result<()> {
+    let path = log_path();
+    if args.iter().any(|a| a == "--clear") {
+        let _ = std::fs::remove_file(&path);
+        println!("audit log cleared ({})", path.display());
+        return Ok(());
+    }
+    let filter = args
+        .iter()
+        .position(|a| a == "--plugin")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut per: std::collections::BTreeMap<String, [usize; 3]> = Default::default();
+    let mut cats: std::collections::BTreeMap<&'static str, usize> = Default::default();
+    let mut recent: Vec<(u64, String, String)> = Vec::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(4, '\t').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let (ts, plugin, outcome, detail) = (parts[0], parts[1], parts[2], parts[3]);
+        if let Some(f) = &filter {
+            if plugin != f {
+                continue;
+            }
+        }
+        let e = per.entry(plugin.to_string()).or_default();
+        match outcome {
+            "OK" => e[0] += 1,
+            "DENIED" => {
+                e[1] += 1;
+                *cats.entry(category(detail)).or_default() += 1;
+                recent.push((ts.parse().unwrap_or(0), plugin.to_string(), detail.to_string()));
+            }
+            _ => e[2] += 1,
+        }
+    }
+    println!("CodeCage audit  ({})\n", path.display());
+    if per.is_empty() {
+        println!("no runs recorded yet");
+        return Ok(());
+    }
+    println!("{:<18} {:>5} {:>5} {:>7} {:>9}", "plugin", "runs", "ok", "denied", "exit!=0");
+    let mut tot = [0usize; 3];
+    for (p, c) in &per {
+        println!("{:<18} {:>5} {:>5} {:>7} {:>9}", p, c[0] + c[1] + c[2], c[0], c[1], c[2]);
+        for i in 0..3 {
+            tot[i] += c[i];
+        }
+    }
+    println!("{:<18} {:>5} {:>5} {:>7} {:>9}", "TOTAL", tot[0] + tot[1] + tot[2], tot[0], tot[1], tot[2]);
+    if !cats.is_empty() {
+        println!("\ndenials by limit:");
+        for (k, v) in &cats {
+            println!("  {k:<12} {v}");
+        }
+        println!("\nlast denials:");
+        for (ts, p, d) in recent.iter().rev().take(10) {
+            println!("  [{ts}] {p}: {d}");
+        }
+    }
+    Ok(())
+}
 /// Load a plugin, reusing a cached native compilation when the bytes haven't changed.
 fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     use std::hash::{Hash, Hasher};
@@ -169,7 +282,16 @@ fn build_wasi(dirs: &[AllowDir], out: &MemoryOutputPipe, err: &MemoryOutputPipe)
 }
 
 fn main() -> Result<()> {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("audit") {
+        return run_audit(&raw[1..]);
+    }
     let o = parse_args()?;
+    let name = Path::new(&o.plugin)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| o.plugin.clone());
+    let _ = PLUGIN.set(name);
 
     let mut config = Config::new();
     config.consume_fuel(!o.no_fuel);
@@ -237,6 +359,7 @@ fn main() -> Result<()> {
     if let Err(e) = result {
         if let Some(exit) = e.downcast_ref::<wasmtime_wasi::I32Exit>() {
             if exit.0 != 0 {
+                log_event("EXIT", &format!("code {}", exit.0));
                 eprintln!("[codecage] plugin exited with code {}", exit.0);
                 std::process::exit(exit.0);
             }
@@ -253,6 +376,14 @@ fn main() -> Result<()> {
             }
         }
     }
+    log_event(
+        "OK",
+        &format!(
+            "fuel {}, {} ms",
+            used.map(|u| u.to_string()).unwrap_or_else(|| "off".into()),
+            elapsed.as_millis()
+        ),
+    );
     match used {
         Some(u) => eprintln!(
             "[codecage] ok: fuel used {u}, time {} ms",
