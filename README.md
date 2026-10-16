@@ -100,6 +100,7 @@ The C plugins are built with Zig's clang and wasi-libc: `powershell -File script
 | `scripts\bench.ps1` | `results\bench.csv` and `bench.md`: cold vs warm startup, caged vs native, fuel on vs off |
 | `scripts\report.ps1 [-Fresh]` | `results\report.html`: a one-page report with the tables and charts |
 | `scripts\demo.ps1 [-NoPause] [-OpenReport]` | a narrated, colour-coded live demo |
+| `scripts\dashboard.ps1` | live web dashboard at http://localhost:8765: run any plugin or all of them, change limits, see output, policy, inspection and the audit log (`?autorun=1` runs everything on load) |
 
 Run all of them with `powershell -ExecutionPolicy Bypass -File <script>`.
 
