@@ -1,0 +1,9 @@
+# CodeCage policy for hello
+plugin = "hello"
+description = "Prints a greeting. Needs nothing."
+
+[limits]
+fuel = 1_000_000
+memory_mb = 16
+timeout_ms = 1000
+max_output_kb = 16

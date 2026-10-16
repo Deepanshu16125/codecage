@@ -153,3 +153,79 @@ fn audit_records_denials() {
     assert!(s.contains("TOTAL                  3     1       2"), "{s}");
     let _ = std::fs::remove_file(&log);
 }
+// ---------- policy files (codecage.toml) ----------
+
+fn policy(name: &str) -> String {
+    root().join("plugins").join(name).join("codecage.toml").to_string_lossy().into_owned()
+}
+
+fn temp_policy(file: &str, body: &str) -> String {
+    let dir = root().join("target").join("test-policies");
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join(file);
+    std::fs::write(&p, body).unwrap();
+    p.to_string_lossy().into_owned()
+}
+
+#[test]
+fn every_plugin_has_a_valid_policy() {
+    for name in PLUGINS {
+        let pol = policy(name);
+        let o = cage(name, &["--policy", &pol]);
+        let s = out(&o);
+        assert!(s.contains("[codecage] policy"), "{name}: policy not loaded\n{s}");
+        assert!(matches!(o.status.code(), Some(0) | Some(1) | Some(2)), "{name}: unexpected exit\n{s}");
+    }
+}
+
+#[test]
+fn policy_grants_folder_to_linecount() {
+    let pol = policy("linecount");
+    let o = cage("linecount", &["--policy", &pol]);
+    assert!(o.status.success(), "{}", out(&o));
+    assert!(out(&o).contains("3 lines"));
+}
+
+#[test]
+fn policy_limits_apply() {
+    // sleep_forever's policy sets a 500 ms timeout (default is 2000 ms).
+    let pol = policy("sleep_forever");
+    let t = std::time::Instant::now();
+    let o = cage("sleep_forever", &["--policy", &pol]);
+    assert_denied(&o, "timeout after 500 ms");
+    assert!(t.elapsed().as_millis() < 1800, "policy timeout not applied");
+}
+
+#[test]
+fn cli_overrides_policy() {
+    // hello's policy allows 1M fuel; a CLI --fuel 100 must win and deny it.
+    let pol = policy("hello");
+    let o = cage("hello", &["--policy", &pol, "--fuel", "100"]);
+    assert_denied(&o, "fuel limit 100");
+}
+
+#[test]
+fn unknown_policy_key_rejected() {
+    let pol = temp_policy("typo.toml", "[limits]\nfule = 5\n");
+    let o = cage("hello", &["--policy", &pol]);
+    let s = out(&o);
+    assert!(!o.status.success() && s.contains("unknown field"), "{s}");
+}
+
+#[test]
+fn policy_ceiling_enforced() {
+    let pol = temp_policy("huge.toml", "[limits]\nmemory_mb = 99999\n");
+    let o = cage("hello", &["--policy", &pol]);
+    let s = out(&o);
+    assert!(!o.status.success() && s.contains("ceiling"), "{s}");
+}
+
+#[test]
+fn policy_env_allow_is_explicit() {
+    // Only the named variable is passed through, and the policy is flagged as permissive.
+    let pol = temp_policy("env.toml", "[env]\nallow = [\"SECRET_TOKEN\"]\n");
+    let o = cage("env_snoop", &["--policy", &pol]);
+    let s = out(&o);
+    assert!(s.contains("SECRET_TOKEN=hunter2") && s.contains("WARNING: policy exposes env vars"), "{s}");
+    assert!(s.contains("LEAKED 1 env vars"), "more than the allowed var leaked\n{s}");
+}

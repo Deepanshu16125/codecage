@@ -1,0 +1,9 @@
+# CodeCage policy for primes
+plugin = "primes"
+description = "CPU-heavy sieve up to 2 million. Pure compute, no files or env."
+
+[limits]
+fuel = 200_000_000
+memory_mb = 32
+timeout_ms = 3000
+max_output_kb = 16

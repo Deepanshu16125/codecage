@@ -1,0 +1,9 @@
+# CodeCage policy for output_flood
+plugin = "output_flood"
+description = "Malicious: floods stdout. The output cap should stop it."
+
+[limits]
+fuel = 500_000_000
+memory_mb = 32
+timeout_ms = 3000
+max_output_kb = 64

@@ -1,0 +1,8 @@
+# CodeCage policy for mem_bomb
+plugin = "mem_bomb"
+description = "Malicious: allocates memory until it is stopped. The memory cap should stop it."
+
+[limits]
+fuel = 5_000_000_000
+memory_mb = 64
+timeout_ms = 5000

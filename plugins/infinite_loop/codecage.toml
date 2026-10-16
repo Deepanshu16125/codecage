@@ -1,0 +1,8 @@
+# CodeCage policy for infinite_loop
+plugin = "infinite_loop"
+description = "Malicious: spins forever. The fuel budget should stop it."
+
+[limits]
+fuel = 50_000_000
+memory_mb = 16
+timeout_ms = 2000

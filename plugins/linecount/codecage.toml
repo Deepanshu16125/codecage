@@ -1,0 +1,12 @@
+# CodeCage policy for linecount
+plugin = "linecount"
+description = "Counts lines in /data/sample.txt. Gets read-only access to demo_data."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
+max_output_kb = 16
+
+[fs]
+read = ["../../demo_data"]

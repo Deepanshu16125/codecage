@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
+mod policy;
+
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{FsPerms, WasiCtxBuilder};
 
@@ -40,20 +42,24 @@ struct RunOpts {
     no_fuel: bool,
     max_output_kb: usize,
     dirs: Vec<AllowDir>,
+    env: Vec<(String, String)>,
 }
 
 const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
        codecage audit [--plugin NAME] [--clear]
 
 options:
+  --policy FILE       load limits and grants from a codecage.toml policy file
   --fuel N            CPU budget (default 50000000)
   --memory-mb N       memory cap in MiB (default 64)
   --timeout-ms N      wall-clock timeout (default 2000)
   --no-fuel           skip fuel; timeout still applies
   --max-output-kb N   cap on stdout/stderr each (default 1024)
-  --allow-dir PATH    grant read-only access (guest path /data, or /data0 /data1 …)
+  --allow-dir PATH    grant read-only access (guest path /data, or /data0 /data1 ...)
   --allow-write-dir PATH  grant read-write access (same guest naming)
+  --allow-env NAME    pass one host environment variable through
 
+precedence: command-line flags > policy file > defaults.
 by default a plugin gets no files, no network, and no environment variables.";
 
 fn parse_args() -> Result<RunOpts> {
@@ -61,61 +67,78 @@ fn parse_args() -> Result<RunOpts> {
     if args.first().map(String::as_str) != Some("run") || args.len() < 2 {
         bail!("{USAGE}");
     }
-    let mut o = RunOpts {
-        plugin: args[1].clone(),
-        fuel: 50_000_000,
-        memory_mb: 64,
-        timeout_ms: 2000,
-        no_fuel: false,
-        max_output_kb: 1024,
-        dirs: Vec::new(),
-    };
+    let plugin = args[1].clone();
+    let mut cli = policy::Limits::default();
+    let mut cli_read: Vec<PathBuf> = Vec::new();
+    let mut cli_write: Vec<PathBuf> = Vec::new();
+    let mut cli_env: Vec<String> = Vec::new();
+    let mut policy_path: Option<PathBuf> = None;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--no-fuel" {
-            o.no_fuel = true;
+            cli.no_fuel = Some(true);
             i += 1;
             continue;
         }
         let val = args.get(i + 1).ok_or_else(|| anyhow!("missing value for {}", args[i]))?;
         match args[i].as_str() {
-            "--fuel" => o.fuel = val.parse()?,
-            "--memory-mb" => o.memory_mb = val.parse()?,
-            "--timeout-ms" => o.timeout_ms = val.parse()?,
-            "--max-output-kb" => o.max_output_kb = val.parse()?,
-            "--allow-dir" => {
-                o.dirs.push(AllowDir {
-                    host: PathBuf::from(val),
-                    guest: String::new(),
-                    write: false,
-                });
-            }
-            "--allow-write-dir" => {
-                o.dirs.push(AllowDir {
-                    host: PathBuf::from(val),
-                    guest: String::new(),
-                    write: true,
-                });
-            }
+            "--policy" => policy_path = Some(PathBuf::from(val)),
+            "--fuel" => cli.fuel = Some(val.parse()?),
+            "--memory-mb" => cli.memory_mb = Some(val.parse()?),
+            "--timeout-ms" => cli.timeout_ms = Some(val.parse()?),
+            "--max-output-kb" => cli.max_output_kb = Some(val.parse()?),
+            "--allow-dir" => cli_read.push(PathBuf::from(val)),
+            "--allow-write-dir" => cli_write.push(PathBuf::from(val)),
+            "--allow-env" => cli_env.push(val.clone()),
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
         i += 2;
     }
-    // Assign stable guest paths: one dir -> /data, several -> /data0 /data1 …
+
+    let pol = match &policy_path {
+        Some(p) => {
+            let pol = policy::load(p)?;
+            eprintln!("[codecage] policy {}", p.display());
+            for w in policy::warnings(&pol) {
+                eprintln!("[codecage] WARNING: policy {w}");
+            }
+            pol
+        }
+        None => policy::Policy::default(),
+    };
+
+    let mut o = RunOpts {
+        plugin,
+        fuel: cli.fuel.or(pol.limits.fuel).unwrap_or(50_000_000),
+        memory_mb: cli.memory_mb.or(pol.limits.memory_mb).unwrap_or(64),
+        timeout_ms: cli.timeout_ms.or(pol.limits.timeout_ms).unwrap_or(2000),
+        no_fuel: cli.no_fuel.or(pol.limits.no_fuel).unwrap_or(false),
+        max_output_kb: cli.max_output_kb.or(pol.limits.max_output_kb).unwrap_or(1024),
+        dirs: Vec::new(),
+        env: Vec::new(),
+    };
+    for (paths, write) in [(&pol.fs.read, false), (&pol.fs.write, true), (&cli_read, false), (&cli_write, true)] {
+        for p in paths {
+            o.dirs.push(AllowDir { host: p.clone(), guest: String::new(), write });
+        }
+    }
+    for name in pol.env.allow.iter().chain(cli_env.iter()) {
+        match std::env::var(name) {
+            Ok(v) => o.env.push((name.clone(), v)),
+            Err(_) => eprintln!("[codecage] note: allowed env var {name} is not set on the host"),
+        }
+    }
+
+    // Assign stable guest paths: one dir -> /data, several -> /data0 /data1 ...
     let n = o.dirs.len();
     for (idx, d) in o.dirs.iter_mut().enumerate() {
-        d.guest = if n == 1 {
-            "/data".into()
-        } else {
-            format!("/data{idx}")
-        };
+        d.guest = if n == 1 { "/data".into() } else { format!("/data{idx}") };
         if !d.host.is_dir() {
-            bail!("--allow-dir path is not a directory: {}", d.host.display());
+            bail!("allowed path is not a directory: {}", d.host.display());
         }
     }
     Ok(o)
 }
-
 static PLUGIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Where run/deny events are appended. Override with CODECAGE_LOG.
@@ -260,9 +283,13 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
     Ok(module)
 }
 
-fn build_wasi(dirs: &[AllowDir], out: &MemoryOutputPipe, err: &MemoryOutputPipe) -> Result<WasiP1Ctx> {
+fn build_wasi(dirs: &[AllowDir], env: &[(String, String)], out: &MemoryOutputPipe, err: &MemoryOutputPipe) -> Result<WasiP1Ctx> {
     let mut b = WasiCtxBuilder::new();
     b.stdout(out.clone()).stderr(err.clone());
+    for (k, v) in env {
+        b.env(k, v);
+        eprintln!("[codecage] allowed env {k}");
+    }
     for d in dirs {
         let perms = if d.write {
             FsPerms::ReadWrite
@@ -305,7 +332,7 @@ fn main() -> Result<()> {
     let cap = o.max_output_kb * 1024;
     let out_pipe = MemoryOutputPipe::new(cap);
     let err_pipe = MemoryOutputPipe::new(cap);
-    let wasi = build_wasi(&o.dirs, &out_pipe, &err_pipe)?;
+    let wasi = build_wasi(&o.dirs, &o.env, &out_pipe, &err_pipe)?;
     let limits = StoreLimitsBuilder::new()
         .memory_size(o.memory_mb * 1024 * 1024)
         .instances(1)

@@ -1,0 +1,11 @@
+# CodeCage policy for try_write
+plugin = "try_write"
+description = "Malicious: tries to write into a folder it was only allowed to read."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
+
+[fs]
+read = ["../../demo_data"]

@@ -1,0 +1,11 @@
+# CodeCage policy for env_snoop
+plugin = "env_snoop"
+description = "Malicious: tries to read host environment variables (tokens, keys). Gets none."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
+
+[env]
+allow = []

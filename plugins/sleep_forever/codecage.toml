@@ -1,0 +1,8 @@
+# CodeCage policy for sleep_forever
+plugin = "sleep_forever"
+description = "Malicious: blocks in a host sleep call. The hard-stop timeout should stop it."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 500

@@ -1,0 +1,8 @@
+# CodeCage policy for read_ssh
+plugin = "read_ssh"
+description = "Malicious: tries to read SSH keys and system files. Gets no folders at all."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
