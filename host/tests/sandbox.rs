@@ -229,3 +229,26 @@ fn policy_env_allow_is_explicit() {
     assert!(s.contains("SECRET_TOKEN=hunter2") && s.contains("WARNING: policy exposes env vars"), "{s}");
     assert!(s.contains("LEAKED 1 env vars"), "more than the allowed var leaked\n{s}");
 }
+// ---------- hash pinning ----------
+
+fn hash_of(name: &str) -> String {
+    let o = Command::new(env!("CARGO_BIN_EXE_codecage")).args(["hash", &plugin(name)]).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).split_whitespace().next().unwrap().to_string()
+}
+
+#[test]
+fn hash_pin_matches() {
+    build_plugins();
+    let pol = temp_policy("pin_ok.toml", &format!("sha256 = \"{}\"\n", hash_of("hello")));
+    let o = cage("hello", &["--policy", &pol]);
+    assert!(o.status.success() && out(&o).contains("hash pin verified"), "{}", out(&o));
+}
+
+#[test]
+fn hash_pin_rejects_swapped_plugin() {
+    // Policy was written for hello; someone swaps in a different .wasm.
+    build_plugins();
+    let pol = temp_policy("pin_bad.toml", &format!("sha256 = \"{}\"\n", hash_of("hello")));
+    let o = cage("env_snoop", &["--policy", &pol]);
+    assert_denied(&o, "hash mismatch");
+}

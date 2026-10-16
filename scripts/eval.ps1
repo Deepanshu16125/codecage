@@ -13,6 +13,13 @@ $env:CODECAGE_LOG = Join-Path $root 'target/eval-audit.log'
 
 function Pol($p) { "plugins/$p/codecage.toml" }
 
+# Hash-pinned policies, generated fresh because the hash changes on every rebuild.
+$pinDir = Join-Path $root 'target/eval-policies'
+New-Item -ItemType Directory -Force $pinDir | Out-Null
+$helloHash = ((& $exe hash (Join-Path $wasm 'hello.wasm')) -split '\s+')[0]
+$pinned = Join-Path $pinDir 'hello_pinned.toml'
+[IO.File]::WriteAllText($pinned, "sha256 = `"$helloHash`"`n")
+
 # plugin, scenario, threat, expected (OK | BLOCKED | DENIED:<limit>), args
 $cases = @(
   @('hello',          'policy',                 'none (benign)',             'OK',              @('--policy', (Pol 'hello'))),
@@ -28,11 +35,13 @@ $cases = @(
   @('try_write',      'policy (read-only dir)', 'write to read-only folder', 'BLOCKED',         @('--policy', (Pol 'try_write'))),
   @('output_flood',   'policy',                 'stdout flood',              'DENIED:output',   @('--policy', (Pol 'output_flood'))),
   @('sleep_forever',  'policy',                 'hang in a host call',       'DENIED:timeout',  @('--policy', (Pol 'sleep_forever'))),
+  @('hello',          'hash-pinned policy',     'none (verified file)',      'OK',              @('--policy', $pinned)),
+  @('env_snoop',      'hello''s pinned policy', 'swapped / tampered plugin', 'DENIED:hash',     @('--policy', $pinned)),
   @('sleep_forever',  'defaults',               'hang in a host call',       'DENIED:timeout',  @())
 )
 
 function Category($reason) {
-  if ($reason -match 'fuel') { 'cpu' } elseif ($reason -match 'timeout') { 'timeout' }
+  if ($reason -match 'hash') { 'hash' } elseif ($reason -match 'fuel') { 'cpu' } elseif ($reason -match 'timeout') { 'timeout' }
   elseif ($reason -match 'memory') { 'memory' } elseif ($reason -match 'output') { 'output' } else { 'other' }
 }
 

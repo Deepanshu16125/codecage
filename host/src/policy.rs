@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 pub struct Policy {
     pub plugin: Option<String>,
     pub description: Option<String>,
+    /// Optional SHA-256 of the exact .wasm file this policy was written for (hash pinning).
+    pub sha256: Option<String>,
     #[serde(default)]
     pub limits: Limits,
     #[serde(default)]

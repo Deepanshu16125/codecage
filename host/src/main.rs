@@ -43,10 +43,12 @@ struct RunOpts {
     max_output_kb: usize,
     dirs: Vec<AllowDir>,
     env: Vec<(String, String)>,
+    sha256: Option<String>,
 }
 
 const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
        codecage audit [--plugin NAME] [--clear]
+       codecage hash <plugin.wasm>   (prints the SHA-256 to pin in a policy)
 
 options:
   --policy FILE       load limits and grants from a codecage.toml policy file
@@ -116,6 +118,7 @@ fn parse_args() -> Result<RunOpts> {
         max_output_kb: cli.max_output_kb.or(pol.limits.max_output_kb).unwrap_or(1024),
         dirs: Vec::new(),
         env: Vec::new(),
+        sha256: pol.sha256.clone(),
     };
     for (paths, write) in [(&pol.fs.read, false), (&pol.fs.write, true), (&cli_read, false), (&cli_write, true)] {
         for p in paths {
@@ -179,7 +182,9 @@ fn deny(reason: &str) -> ! {
 
 /// Short category for a denial reason, used by `codecage audit`.
 fn category(reason: &str) -> &'static str {
-    if reason.contains("fuel") {
+    if reason.contains("hash") {
+        "hash pin"
+    } else if reason.contains("fuel") {
         "cpu (fuel)"
     } else if reason.contains("timeout") {
         "timeout"
@@ -308,8 +313,18 @@ fn build_wasi(dirs: &[AllowDir], env: &[(String, String)], out: &MemoryOutputPip
     Ok(b.build_p1())
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("hash") {
+        let path = raw.get(1).ok_or_else(|| anyhow!("usage: codecage hash <plugin.wasm>"))?;
+        println!("{}  {path}", sha256_hex(&std::fs::read(path)?));
+        return Ok(());
+    }
     if raw.first().map(String::as_str) == Some("audit") {
         return run_audit(&raw[1..]);
     }
@@ -319,6 +334,15 @@ fn main() -> Result<()> {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| o.plugin.clone());
     let _ = PLUGIN.set(name);
+
+    // Hash pinning: refuse to run if the file is not the one the policy was written for.
+    if let Some(want) = &o.sha256 {
+        let got = sha256_hex(&std::fs::read(&o.plugin)?);
+        if !got.eq_ignore_ascii_case(want.trim()) {
+            deny(&format!("plugin hash mismatch: policy pins {}, file is {got}", want.trim()));
+        }
+        eprintln!("[codecage] hash pin verified");
+    }
 
     let mut config = Config::new();
     config.consume_fuel(!o.no_fuel);

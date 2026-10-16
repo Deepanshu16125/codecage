@@ -17,8 +17,8 @@ ul{margin:8px 0;padding-left:20px}footer{margin-top:40px;color:var(--muted);font
 </style></head><body><div class="wrap">
 <h1>CodeCage</h1><div class="sub">A WebAssembly sandbox for untrusted plug-ins - evaluation report</div>
 <div class="grid">
-<div class="card"><div class="big">14 / 14</div><div class="l">scenarios behaved as expected</div></div>
-<div class="card"><div class="big">11</div><div class="l">attacks blocked or stopped</div></div>
+<div class="card"><div class="big">16 / 16</div><div class="l">scenarios behaved as expected</div></div>
+<div class="card"><div class="big">12</div><div class="l">attacks blocked or stopped</div></div>
 <div class="card"><div class="big">3.1&times;</div><div class="l">faster startup with the compile cache</div></div>
 <div class="card"><div class="big">1.42&times;</div><div class="l">wall time vs native (primes, fuel on)</div></div>
 <div class="card"><div class="big">6%</div><div class="l">extra cost of fuel metering</div></div>
@@ -26,19 +26,21 @@ ul{margin:8px 0;padding-left:20px}footer{margin-top:40px;color:var(--muted);font
 <h2>Security evaluation</h2>
 <p class="sub">Each plugin runs under its own <code>codecage.toml</code> policy. <span class="tag ok">OK</span> = allowed and worked, <span class="tag block">BLOCKED</span> = the sandbox refused the file or env access, <span class="tag deny">DENIED</span> = a resource limit stopped the plugin.</p>
 <table><thead><tr><th>Plugin</th><th>Scenario</th><th>Threat</th><th>Expected</th><th>Actual</th><th>Reason / plugin output</th><th class="num">ms</th><th>Verdict</th></tr></thead><tbody>
-<tr><td>hello</td><td>policy</td><td>none (benign)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>20</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>hello</td><td>policy</td><td>none (benign)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>19</td><td><span class='v pass'>PASS</span></td></tr>
 <tr><td>primes</td><td>policy</td><td>none (benign, CPU heavy)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>19</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>linecount</td><td>policy grants demo_data</td><td>none (benign, file read)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>12</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>linecount</td><td>no grant</td><td>reads a file it was not given</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>linecount failed: No such file or directory (os error 44)</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>infinite_loop</td><td>policy</td><td>CPU exhaustion</td><td>DENIED:cpu</td><td><span class='tag deny'>DENIED:cpu</span></td><td class='muted'>CPU budget exhausted (fuel limit 50000000)</td><td class='num'>14</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>linecount</td><td>policy grants demo_data</td><td>none (benign, file read)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>17</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>linecount</td><td>no grant</td><td>reads a file it was not given</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>linecount failed: No such file or directory (os error 44)</td><td class='num'>12</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>infinite_loop</td><td>policy</td><td>CPU exhaustion</td><td>DENIED:cpu</td><td><span class='tag deny'>DENIED:cpu</span></td><td class='muted'>CPU budget exhausted (fuel limit 50000000)</td><td class='num'>12</td><td><span class='v pass'>PASS</span></td></tr>
 <tr><td>infinite_loop</td><td>--no-fuel</td><td>CPU exhaustion, fuel off</td><td>DENIED:timeout</td><td><span class='tag deny'>DENIED:timeout</span></td><td class='muted'>timeout after 2000 ms</td><td class='num'>2010</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>mem_bomb</td><td>policy</td><td>memory exhaustion</td><td>DENIED:memory</td><td><span class='tag deny'>DENIED:memory</span></td><td class='muted'>memory limit of 64 MiB exceeded</td><td class='num'>23</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>mem_bomb</td><td>policy</td><td>memory exhaustion</td><td>DENIED:memory</td><td><span class='tag deny'>DENIED:memory</span></td><td class='muted'>memory limit of 64 MiB exceeded</td><td class='num'>24</td><td><span class='v pass'>PASS</span></td></tr>
 <tr><td>read_ssh</td><td>policy</td><td>read SSH keys / system files</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>blocked /data/../.ssh/id_rsa: No such file or directory (os error 44)</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
 <tr><td>escape_preopen</td><td>policy</td><td>path traversal (../)</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>blocked ../Cargo.toml: No such file or directory (os error 44)</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>env_snoop</td><td>policy</td><td>steal env vars / tokens</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>env_snoop: no environment visible (good)</td><td class='num'>13</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>try_write</td><td>policy (read-only dir)</td><td>write to read-only folder</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>write blocked: Operation not permitted (os error 63)</td><td class='num'>15</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>output_flood</td><td>policy</td><td>stdout flood</td><td>DENIED:output</td><td><span class='tag deny'>DENIED:output</span></td><td class='muted'>output limit of 64 KiB exceeded</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
-<tr><td>sleep_forever</td><td>policy</td><td>hang in a host call</td><td>DENIED:timeout</td><td><span class='tag deny'>DENIED:timeout</span></td><td class='muted'>timeout after 500 ms (plugin was blocked in a host call)</td><td class='num'>767</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>env_snoop</td><td>policy</td><td>steal env vars / tokens</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>env_snoop: no environment visible (good)</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>try_write</td><td>policy (read-only dir)</td><td>write to read-only folder</td><td>BLOCKED</td><td><span class='tag block'>BLOCKED</span></td><td class='muted'>write blocked: Operation not permitted (os error 63)</td><td class='num'>12</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>output_flood</td><td>policy</td><td>stdout flood</td><td>DENIED:output</td><td><span class='tag deny'>DENIED:output</span></td><td class='muted'>output limit of 64 KiB exceeded</td><td class='num'>16</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>sleep_forever</td><td>policy</td><td>hang in a host call</td><td>DENIED:timeout</td><td><span class='tag deny'>DENIED:timeout</span></td><td class='muted'>timeout after 500 ms (plugin was blocked in a host call)</td><td class='num'>778</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>hello</td><td>hash-pinned policy</td><td>none (verified file)</td><td>OK</td><td><span class='tag ok'>OK</span></td><td class='muted'></td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
+<tr><td>env_snoop</td><td>hello&#39;s pinned policy</td><td>swapped / tampered plugin</td><td>DENIED:hash</td><td><span class='tag deny'>DENIED:hash</span></td><td class='muted'>plugin hash mismatch: policy pins 19a73301a636d30c441bdff42681b574b95fe08b3b2a2c50e6448b498f07e692, file is 33aacd68e9c7d428b5b6df0c2303496edd6bbdecc005cc92a80f10f16e64e607</td><td class='num'>11</td><td><span class='v pass'>PASS</span></td></tr>
 <tr><td>sleep_forever</td><td>defaults</td><td>hang in a host call</td><td>DENIED:timeout</td><td><span class='tag deny'>DENIED:timeout</span></td><td class='muted'>timeout after 2000 ms (plugin was blocked in a host call)</td><td class='num'>2262</td><td><span class='v pass'>PASS</span></td></tr>
 </tbody></table>
 <h2>Performance</h2>
@@ -57,5 +59,5 @@ ul{margin:8px 0;padding-left:20px}footer{margin-top:40px;color:var(--muted);font
 <li><b>Files and environment</b>: capability-based WASI. A plugin sees only the folders its policy grants (read-only unless it says write) and only the named env vars.</li>
 <li><b>Audit</b>: every run is logged; <code>codecage audit</code> summarizes denials per plugin.</li>
 </ul></div>
-<footer>Generated 16 Oct 2026, 11:16 from commit bb4f96c by scripts/report.ps1.</footer>
+<footer>Generated 16 Oct 2026, 11:24 from commit 68af32d by scripts/report.ps1.</footer>
 </div></body></html>
