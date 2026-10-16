@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
+    #[allow(dead_code)] // documentation fields, accepted but not used by the runtime
     pub plugin: Option<String>,
+    #[allow(dead_code)]
     pub description: Option<String>,
     /// Optional SHA-256 of the exact .wasm file this policy was written for (hash pinning).
     pub sha256: Option<String>,

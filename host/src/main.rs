@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
+mod inspect;
 mod policy;
 
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
@@ -48,6 +49,7 @@ struct RunOpts {
 
 const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
        codecage audit [--plugin NAME] [--clear]
+       codecage inspect <plugin.wasm>  (lists what the plugin asks the host for)
        codecage hash <plugin.wasm>   (prints the SHA-256 to pin in a policy)
 
 options:
@@ -320,6 +322,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("inspect") {
+        return inspect::run(&raw[1..]);
+    }
     if raw.first().map(String::as_str) == Some("hash") {
         let path = raw.get(1).ok_or_else(|| anyhow!("usage: codecage hash <plugin.wasm>"))?;
         println!("{}  {path}", sha256_hex(&std::fs::read(path)?));

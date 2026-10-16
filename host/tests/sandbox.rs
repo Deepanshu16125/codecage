@@ -252,3 +252,19 @@ fn hash_pin_rejects_swapped_plugin() {
     let o = cage("env_snoop", &["--policy", &pol]);
     assert_denied(&o, "hash mismatch");
 }
+// ---------- static inspection ----------
+
+#[test]
+fn inspect_lists_host_requests() {
+    build_plugins();
+    let run = |name: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_codecage")).args(["inspect", &plugin(name)]).output().unwrap();
+        assert!(o.status.success(), "{}", out(&o));
+        out(&o)
+    };
+    let ssh = run("read_ssh");
+    assert!(ssh.contains("path_open") && ssh.contains("may try to open paths"), "{ssh}");
+    let hello = run("hello");
+    assert!(hello.contains("never opens paths") && !hello.contains("path_open"), "{hello}");
+    assert!(run("sleep_forever").contains("poll_oneoff"));
+}
