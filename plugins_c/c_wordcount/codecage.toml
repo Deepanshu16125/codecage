@@ -1,0 +1,12 @@
+# CodeCage policy for c_wordcount (C plugin)
+plugin = "c_wordcount"
+description = "C plugin: counts lines and words in /data/sample.txt. Read-only demo_data."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
+max_output_kb = 16
+
+[fs]
+read = ["../../demo_data"]

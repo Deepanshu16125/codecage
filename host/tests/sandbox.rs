@@ -268,3 +268,67 @@ fn inspect_lists_host_requests() {
     assert!(hello.contains("never opens paths") && !hello.contains("path_open"), "{hello}");
     assert!(run("sleep_forever").contains("poll_oneoff"));
 }
+// ---------- C plugins (built with zig cc, wasm32-wasi) ----------
+
+/// Builds the C plugins once. Returns false (test skipped) when zig is missing,
+/// unless CODECAGE_REQUIRE_ZIG is set (CI), in which case it fails.
+fn build_c_plugins() -> bool {
+    static ONCE: Once = Once::new();
+    static OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    ONCE.call_once(|| {
+        let has_zig = Command::new("zig").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+        if !has_zig {
+            assert!(std::env::var_os("CODECAGE_REQUIRE_ZIG").is_none(), "zig is required but not installed");
+            eprintln!("zig not found: skipping C plugin tests");
+            return;
+        }
+        let out = root().join("target").join("c-plugins");
+        std::fs::create_dir_all(&out).unwrap();
+        for name in ["c_wordcount", "c_steal", "c_spin"] {
+            let src = root().join("plugins_c").join(name).join("main.c");
+            let st = Command::new("zig")
+                .args(["cc", "-target", "wasm32-wasi", "-O2", "-s",
+                       "-Wl,--initial-memory=1048576", "-Wl,-z,stack-size=65536", "-o"])
+                .arg(out.join(format!("{name}.wasm")))
+                .arg(src)
+                .status()
+                .expect("run zig");
+            assert!(st.success(), "zig failed to build {name}");
+        }
+        OK.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    OK.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn cage_c(name: &str) -> Output {
+    let wasm = root().join("target/c-plugins").join(format!("{name}.wasm"));
+    let pol = root().join("plugins_c").join(name).join("codecage.toml");
+    Command::new(env!("CARGO_BIN_EXE_codecage"))
+        .current_dir(root())
+        .env("SECRET_TOKEN", "hunter2")
+        .env("CODECAGE_LOG", root().join("target").join("test-audit-c.log"))
+        .args(["run", &wasm.to_string_lossy(), "--policy", &pol.to_string_lossy()])
+        .output()
+        .expect("run codecage")
+}
+
+#[test]
+fn c_wordcount_runs_with_policy() {
+    if !build_c_plugins() { return; }
+    let o = cage_c("c_wordcount");
+    assert!(o.status.success() && out(&o).contains("3 lines"), "{}", out(&o));
+}
+
+#[test]
+fn c_steal_is_fully_blocked() {
+    if !build_c_plugins() { return; }
+    let o = cage_c("c_steal");
+    assert_blocked(&o);
+    assert!(out(&o).contains("all attempts blocked"));
+}
+
+#[test]
+fn c_spin_hits_fuel() {
+    if !build_c_plugins() { return; }
+    assert_denied(&cage_c("c_spin"), "fuel");
+}

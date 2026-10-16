@@ -59,6 +59,14 @@ Step 'Memory bomb' 'Allocates memory until stopped. The 64 MiB cap stops it.' 'm
 Step 'Output flood' 'Spams stdout. The 64 KiB output cap stops it.' 'output_flood' @('--policy', 'plugins/output_flood/codecage.toml') 4
 Step 'Hanging in a system call' 'Sleeps for an hour inside the host. The watchdog hard-stops it.' 'sleep_forever' @('--policy', 'plugins/sleep_forever/codecage.toml')
 
+if (Get-Command zig -ErrorAction SilentlyContinue) {
+  & (Join-Path $PSScriptRoot 'build-c.ps1') | Out-Null
+  $wasmRust = $wasm; $wasm = Join-Path $root 'target/c-plugins'
+  Step 'A plugin written in C' 'Same cage, different language: C compiled to WebAssembly with Zig.' 'c_wordcount' @('--policy', 'plugins_c/c_wordcount/codecage.toml')
+  Step 'A malicious C plugin' 'Tries /etc/passwd, SSH keys, ../ escape, a write, and SECRET_TOKEN.' 'c_steal' @('--policy', 'plugins_c/c_steal/codecage.toml') 9
+  $wasm = $wasmRust
+}
+
 $pinDir = Join-Path $root 'target/demo-policies'; New-Item -ItemType Directory -Force $pinDir | Out-Null
 $h = ((& $exe hash (Join-Path $wasm 'hello.wasm')) -split '\s+')[0]
 $pin = Join-Path $pinDir 'hello_pinned.toml'

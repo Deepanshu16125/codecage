@@ -1,0 +1,8 @@
+# CodeCage policy for c_spin (C plugin)
+plugin = "c_spin"
+description = "Malicious C plugin: infinite loop. The fuel budget should stop it."
+
+[limits]
+fuel = 50_000_000
+memory_mb = 16
+timeout_ms = 2000

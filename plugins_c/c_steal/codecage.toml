@@ -1,0 +1,11 @@
+# CodeCage policy for c_steal (C plugin)
+plugin = "c_steal"
+description = "Malicious C plugin: reads secrets, escapes ../, writes to a read-only folder, steals env."
+
+[limits]
+fuel = 10_000_000
+memory_mb = 16
+timeout_ms = 1000
+
+[fs]
+read = ["../../demo_data"]

@@ -40,6 +40,15 @@ $cases = @(
   @('sleep_forever',  'defaults',               'hang in a host call',       'DENIED:timeout',  @())
 )
 
+# C plugins (second language), built with Zig when available.
+$cdir = Join-Path $root 'target/c-plugins'
+if (Get-Command zig -ErrorAction SilentlyContinue) {
+  & (Join-Path $PSScriptRoot 'build-c.ps1') | Out-Null
+  $cases += ,@('c_wordcount', 'C, policy grants demo_data', 'none (benign, C)', 'OK', @('--policy', 'plugins_c/c_wordcount/codecage.toml'))
+  $cases += ,@('c_steal', 'C, policy', 'files + ../ + write + env (C)', 'BLOCKED', @('--policy', 'plugins_c/c_steal/codecage.toml'))
+  $cases += ,@('c_spin', 'C, policy', 'CPU exhaustion (C)', 'DENIED:cpu', @('--policy', 'plugins_c/c_spin/codecage.toml'))
+}
+
 function Category($reason) {
   if ($reason -match 'hash') { 'hash' } elseif ($reason -match 'fuel') { 'cpu' } elseif ($reason -match 'timeout') { 'timeout' }
   elseif ($reason -match 'memory') { 'memory' } elseif ($reason -match 'output') { 'output' } else { 'other' }
@@ -48,7 +57,7 @@ function Category($reason) {
 $rows = foreach ($c in $cases) {
   $plugin, $scenario, $threat, $expected, $extra = $c
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  $text = (& $exe run (Join-Path $wasm "$plugin.wasm") @extra 2>&1 | ForEach-Object { "$_" }) -join "`n"
+  $text = (& $exe run $(if ($plugin -like 'c_*') { Join-Path $cdir "$plugin.wasm" } else { Join-Path $wasm "$plugin.wasm" }) @extra 2>&1 | ForEach-Object { "$_" }) -join "`n"
   $code = $LASTEXITCODE
   $sw.Stop()
   $leak = $text -match 'LEAKED|ESCAPED|WROTE'

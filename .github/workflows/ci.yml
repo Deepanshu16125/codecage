@@ -19,5 +19,10 @@ jobs:
         with:
           targets: wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
       - name: Run sandbox tests
+        env:
+          CODECAGE_REQUIRE_ZIG: 1
         run: cargo test -p host --release
