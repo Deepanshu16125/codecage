@@ -8,13 +8,13 @@ header{display:flex;align-items:center;gap:16px;padding:16px 24px;border-bottom:
 header h1{margin:0;font-size:22px}header .sub{color:var(--muted)}
 .stats{margin-left:auto;display:flex;gap:10px}.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;text-align:center;min-width:86px}
 .stat b{display:block;font-size:18px}.stat span{color:var(--muted);font-size:11px}
-main{display:grid;grid-template-columns:1fr 440px;gap:18px;padding:18px 24px}
+main{display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:18px;padding:18px 24px}main>section{min-width:0}
 .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px}
 button{background:var(--card2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;font:inherit}
 button:hover{border-color:var(--accent)}button.primary{background:var(--accent);color:#0b0d13;border-color:var(--accent);font-weight:600}
 button:disabled{opacity:.5;cursor:wait}select,input{background:var(--card2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:inherit}
 input[type=number]{width:120px}label{color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}@media(min-width:1700px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:1250px){main{grid-template-columns:minmax(0,1fr)}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.grid{grid-template-columns:minmax(0,1fr)}}.pc{min-width:0;overflow:hidden}.pc .top{flex-wrap:nowrap;min-width:0}.pc .tags{display:flex;gap:6px;margin-top:5px}.pc .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc .top button{flex:0 0 auto}
 .pc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;transition:border-color .15s}
 .pc:hover,.pc.sel{border-color:var(--accent)}.pc .top{display:flex;align-items:center;gap:6px}.pc .nm{font-weight:700;font-size:15px}
 .pc .desc{color:var(--muted);font-size:12px;min-height:34px}.pc .res{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px}
@@ -66,9 +66,8 @@ function drawGrid(){
     else if(r){const m=$('mode').value==='policy'&&!overrides()?(r.verdict===p.expected?'<span class="match y">&#10003; expected</span>':'<span class="match n">&#10007; expected '+esc(p.expected)+'</span>'):'';
       res=`<span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span><span>${r.ms} ms</span>${m}`}
     return `<div class="pc ${sel===p.name?'sel':''}" onclick="select('${p.name}')"><div class="top"><span class="nm">${esc(p.name)}</span>
-      <span class="pill">${p.lang}</span><span class="pill ${p.kind==='malicious'?'mal':'ben'}">${p.kind}</span>
       <button style="margin-left:auto;padding:3px 10px" onclick="event.stopPropagation();runOne('${p.name}')" ${busy?'disabled':''}>Run</button></div>
-      <div class="desc">${esc(p.description)}</div><div class="res">${res}</div></div>`}).join('')}
+      <div class="tags"><span class="pill">${p.lang}</span><span class="pill ${p.kind==='malicious'?'mal':'ben'}">${p.kind}</span></div><div class="desc">${esc(p.description)}</div><div class="res">${res}</div></div>`}).join('')}
 function overrides(){return $('fuel').value||$('mem').value||$('tmo').value||$('nofuel').checked}
 function qs(name){const u=new URLSearchParams({name,mode:$('mode').value});if($('fuel').value)u.set('fuel',$('fuel').value);
   if($('mem').value)u.set('memory-mb',$('mem').value);if($('tmo').value)u.set('timeout-ms',$('tmo').value);if($('nofuel').checked)u.set('nofuel','1');return u}
