@@ -1,5 +1,9 @@
 fn main() {
-    for p in ["../Cargo.toml", "/data/../Cargo.toml", "/data/../../Windows/System32/drivers/etc/hosts"] {
+    for p in [
+        "../Cargo.toml",
+        "/data/../Cargo.toml",
+        "/data/../../Windows/System32/drivers/etc/hosts",
+    ] {
         match std::fs::read_to_string(p) {
             Ok(s) => {
                 println!("ESCAPED via {p}: {} bytes", s.len());

@@ -4,12 +4,24 @@ use std::process::{Command, Output};
 use std::sync::Once;
 
 const PLUGINS: &[&str] = &[
-    "hello", "primes", "linecount", "infinite_loop", "mem_bomb", "read_ssh",
-    "escape_preopen", "env_snoop", "try_write", "output_flood", "sleep_forever",
+    "hello",
+    "primes",
+    "linecount",
+    "infinite_loop",
+    "mem_bomb",
+    "read_ssh",
+    "escape_preopen",
+    "env_snoop",
+    "try_write",
+    "output_flood",
+    "sleep_forever",
 ];
 
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn build_plugins() {
@@ -49,19 +61,35 @@ fn cage(name: &str, extra: &[&str]) -> Output {
 }
 
 fn out(o: &Output) -> String {
-    format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
 }
 
 fn assert_denied(o: &Output, reason: &str) {
     let s = out(o);
-    assert_eq!(o.status.code(), Some(2), "expected DENIED exit 2, got {:?}\n{s}", o.status.code());
-    assert!(s.contains("DENIED") && s.contains(reason), "expected DENIED containing {reason:?}\n{s}");
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "expected DENIED exit 2, got {:?}\n{s}",
+        o.status.code()
+    );
+    assert!(
+        s.contains("DENIED") && s.contains(reason),
+        "expected DENIED containing {reason:?}\n{s}"
+    );
 }
 
 /// Plugin tried something and was refused (it exits 1 and never prints a leak marker).
 fn assert_blocked(o: &Output) {
     let s = out(o);
-    assert_eq!(o.status.code(), Some(1), "expected plugin to fail with 1\n{s}");
+    assert_eq!(
+        o.status.code(),
+        Some(1),
+        "expected plugin to fail with 1\n{s}"
+    );
     for marker in ["LEAKED", "ESCAPED", "WROTE"] {
         assert!(!s.contains(marker), "sandbox leaked ({marker})\n{s}");
     }
@@ -77,7 +105,11 @@ fn hello_runs() {
 #[test]
 fn primes_correct() {
     let o = cage("primes", &["--fuel", "10000000000"]);
-    assert!(out(&o).contains("primes below 2000000: 148933"), "{}", out(&o));
+    assert!(
+        out(&o).contains("primes below 2000000: 148933"),
+        "{}",
+        out(&o)
+    );
 }
 
 #[test]
@@ -95,12 +127,18 @@ fn infinite_loop_hits_fuel() {
 
 #[test]
 fn infinite_loop_hits_timeout_without_fuel() {
-    assert_denied(&cage("infinite_loop", &["--no-fuel", "--timeout-ms", "300"]), "timeout");
+    assert_denied(
+        &cage("infinite_loop", &["--no-fuel", "--timeout-ms", "300"]),
+        "timeout",
+    );
 }
 
 #[test]
 fn mem_bomb_hits_memory_cap() {
-    assert_denied(&cage("mem_bomb", &["--no-fuel", "--timeout-ms", "5000"]), "memory");
+    assert_denied(
+        &cage("mem_bomb", &["--no-fuel", "--timeout-ms", "5000"]),
+        "memory",
+    );
 }
 
 #[test]
@@ -139,16 +177,31 @@ fn audit_records_denials() {
     let _ = std::fs::remove_file(&log);
     build_plugins();
     let bin = env!("CARGO_BIN_EXE_codecage");
-    for (p, extra) in [("hello", vec![]), ("infinite_loop", vec![]), ("mem_bomb", vec!["--no-fuel"])] {
+    for (p, extra) in [
+        ("hello", vec![]),
+        ("infinite_loop", vec![]),
+        ("mem_bomb", vec!["--no-fuel"]),
+    ] {
         let pp = plugin(p);
         let mut a = vec!["run", pp.as_str()];
         a.extend(extra);
-        Command::new(bin).env("CODECAGE_LOG", &log).args(&a).output().unwrap();
+        Command::new(bin)
+            .env("CODECAGE_LOG", &log)
+            .args(&a)
+            .output()
+            .unwrap();
     }
-    let o = Command::new(bin).env("CODECAGE_LOG", &log).arg("audit").output().unwrap();
+    let o = Command::new(bin)
+        .env("CODECAGE_LOG", &log)
+        .arg("audit")
+        .output()
+        .unwrap();
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{s}");
-    assert!(s.contains("hello") && s.contains("infinite_loop") && s.contains("mem_bomb"), "{s}");
+    assert!(
+        s.contains("hello") && s.contains("infinite_loop") && s.contains("mem_bomb"),
+        "{s}"
+    );
     assert!(s.contains("cpu (fuel)") && s.contains("memory"), "{s}");
     assert!(s.contains("TOTAL                  3     1       2"), "{s}");
     let _ = std::fs::remove_file(&log);
@@ -156,7 +209,12 @@ fn audit_records_denials() {
 // ---------- policy files (codecage.toml) ----------
 
 fn policy(name: &str) -> String {
-    root().join("plugins").join(name).join("codecage.toml").to_string_lossy().into_owned()
+    root()
+        .join("plugins")
+        .join(name)
+        .join("codecage.toml")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn temp_policy(file: &str, body: &str) -> String {
@@ -173,8 +231,14 @@ fn every_plugin_has_a_valid_policy() {
         let pol = policy(name);
         let o = cage(name, &["--policy", &pol]);
         let s = out(&o);
-        assert!(s.contains("[codecage] policy"), "{name}: policy not loaded\n{s}");
-        assert!(matches!(o.status.code(), Some(0) | Some(1) | Some(2)), "{name}: unexpected exit\n{s}");
+        assert!(
+            s.contains("[codecage] policy"),
+            "{name}: policy not loaded\n{s}"
+        );
+        assert!(
+            matches!(o.status.code(), Some(0) | Some(1) | Some(2)),
+            "{name}: unexpected exit\n{s}"
+        );
     }
 }
 
@@ -226,29 +290,52 @@ fn policy_env_allow_is_explicit() {
     let pol = temp_policy("env.toml", "[env]\nallow = [\"SECRET_TOKEN\"]\n");
     let o = cage("env_snoop", &["--policy", &pol]);
     let s = out(&o);
-    assert!(s.contains("SECRET_TOKEN=hunter2") && s.contains("WARNING: policy exposes env vars"), "{s}");
-    assert!(s.contains("LEAKED 1 env vars"), "more than the allowed var leaked\n{s}");
+    assert!(
+        s.contains("SECRET_TOKEN=hunter2") && s.contains("WARNING: policy exposes env vars"),
+        "{s}"
+    );
+    assert!(
+        s.contains("LEAKED 1 env vars"),
+        "more than the allowed var leaked\n{s}"
+    );
 }
 // ---------- hash pinning ----------
 
 fn hash_of(name: &str) -> String {
-    let o = Command::new(env!("CARGO_BIN_EXE_codecage")).args(["hash", &plugin(name)]).output().unwrap();
-    String::from_utf8_lossy(&o.stdout).split_whitespace().next().unwrap().to_string()
+    let o = Command::new(env!("CARGO_BIN_EXE_codecage"))
+        .args(["hash", &plugin(name)])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&o.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 #[test]
 fn hash_pin_matches() {
     build_plugins();
-    let pol = temp_policy("pin_ok.toml", &format!("sha256 = \"{}\"\n", hash_of("hello")));
+    let pol = temp_policy(
+        "pin_ok.toml",
+        &format!("sha256 = \"{}\"\n", hash_of("hello")),
+    );
     let o = cage("hello", &["--policy", &pol]);
-    assert!(o.status.success() && out(&o).contains("hash pin verified"), "{}", out(&o));
+    assert!(
+        o.status.success() && out(&o).contains("hash pin verified"),
+        "{}",
+        out(&o)
+    );
 }
 
 #[test]
 fn hash_pin_rejects_swapped_plugin() {
     // Policy was written for hello; someone swaps in a different .wasm.
     build_plugins();
-    let pol = temp_policy("pin_bad.toml", &format!("sha256 = \"{}\"\n", hash_of("hello")));
+    let pol = temp_policy(
+        "pin_bad.toml",
+        &format!("sha256 = \"{}\"\n", hash_of("hello")),
+    );
     let o = cage("env_snoop", &["--policy", &pol]);
     assert_denied(&o, "hash mismatch");
 }
@@ -258,14 +345,23 @@ fn hash_pin_rejects_swapped_plugin() {
 fn inspect_lists_host_requests() {
     build_plugins();
     let run = |name: &str| {
-        let o = Command::new(env!("CARGO_BIN_EXE_codecage")).args(["inspect", &plugin(name)]).output().unwrap();
+        let o = Command::new(env!("CARGO_BIN_EXE_codecage"))
+            .args(["inspect", &plugin(name)])
+            .output()
+            .unwrap();
         assert!(o.status.success(), "{}", out(&o));
         out(&o)
     };
     let ssh = run("read_ssh");
-    assert!(ssh.contains("path_open") && ssh.contains("may try to open paths"), "{ssh}");
+    assert!(
+        ssh.contains("path_open") && ssh.contains("may try to open paths"),
+        "{ssh}"
+    );
     let hello = run("hello");
-    assert!(hello.contains("never opens paths") && !hello.contains("path_open"), "{hello}");
+    assert!(
+        hello.contains("never opens paths") && !hello.contains("path_open"),
+        "{hello}"
+    );
     assert!(run("sleep_forever").contains("poll_oneoff"));
 }
 // ---------- C plugins (built with zig cc, wasm32-wasi) ----------
@@ -276,9 +372,16 @@ fn build_c_plugins() -> bool {
     static ONCE: Once = Once::new();
     static OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     ONCE.call_once(|| {
-        let has_zig = Command::new("zig").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+        let has_zig = Command::new("zig")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
         if !has_zig {
-            assert!(std::env::var_os("CODECAGE_REQUIRE_ZIG").is_none(), "zig is required but not installed");
+            assert!(
+                std::env::var_os("CODECAGE_REQUIRE_ZIG").is_none(),
+                "zig is required but not installed"
+            );
             eprintln!("zig not found: skipping C plugin tests");
             return;
         }
@@ -287,8 +390,16 @@ fn build_c_plugins() -> bool {
         for name in ["c_wordcount", "c_steal", "c_spin"] {
             let src = root().join("plugins_c").join(name).join("main.c");
             let st = Command::new("zig")
-                .args(["cc", "-target", "wasm32-wasi", "-O2", "-s",
-                       "-Wl,--initial-memory=1048576", "-Wl,-z,stack-size=65536", "-o"])
+                .args([
+                    "cc",
+                    "-target",
+                    "wasm32-wasi",
+                    "-O2",
+                    "-s",
+                    "-Wl,--initial-memory=1048576",
+                    "-Wl,-z,stack-size=65536",
+                    "-o",
+                ])
                 .arg(out.join(format!("{name}.wasm")))
                 .arg(src)
                 .status()
@@ -306,22 +417,38 @@ fn cage_c(name: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_codecage"))
         .current_dir(root())
         .env("SECRET_TOKEN", "hunter2")
-        .env("CODECAGE_LOG", root().join("target").join("test-audit-c.log"))
-        .args(["run", &wasm.to_string_lossy(), "--policy", &pol.to_string_lossy()])
+        .env(
+            "CODECAGE_LOG",
+            root().join("target").join("test-audit-c.log"),
+        )
+        .args([
+            "run",
+            &wasm.to_string_lossy(),
+            "--policy",
+            &pol.to_string_lossy(),
+        ])
         .output()
         .expect("run codecage")
 }
 
 #[test]
 fn c_wordcount_runs_with_policy() {
-    if !build_c_plugins() { return; }
+    if !build_c_plugins() {
+        return;
+    }
     let o = cage_c("c_wordcount");
-    assert!(o.status.success() && out(&o).contains("3 lines"), "{}", out(&o));
+    assert!(
+        o.status.success() && out(&o).contains("3 lines"),
+        "{}",
+        out(&o)
+    );
 }
 
 #[test]
 fn c_steal_is_fully_blocked() {
-    if !build_c_plugins() { return; }
+    if !build_c_plugins() {
+        return;
+    }
     let o = cage_c("c_steal");
     assert_blocked(&o);
     assert!(out(&o).contains("all attempts blocked"));
@@ -329,6 +456,8 @@ fn c_steal_is_fully_blocked() {
 
 #[test]
 fn c_spin_hits_fuel() {
-    if !build_c_plugins() { return; }
+    if !build_c_plugins() {
+        return;
+    }
     assert_denied(&cage_c("c_spin"), "fuel");
 }

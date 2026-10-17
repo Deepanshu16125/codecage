@@ -9,7 +9,10 @@ members = [
   "plugins/linecount",
   "plugins/read_ssh",
   "plugins/escape_preopen",
-  "plugins/env_snoop", "plugins/try_write", "plugins/output_flood", "plugins/sleep_forever", "plugins/try_write", "plugins/output_flood", "plugins/sleep_forever", "plugins/output_flood", "plugins/sleep_forever",
+  "plugins/env_snoop",
+  "plugins/try_write",
+  "plugins/output_flood",
+  "plugins/sleep_forever",
 ]
 
 [profile.release]

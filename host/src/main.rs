@@ -1,8 +1,10 @@
 //! CodeCage: run untrusted WASI plugins inside a locked-down sandbox.
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use wasmtime::{Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{
+    Config, Engine, Linker, Module, ResourceLimiter, Store, StoreLimits, StoreLimitsBuilder,
+};
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
 mod inspect;
 mod policy;
@@ -17,14 +19,24 @@ struct State {
 }
 
 impl ResourceLimiter for State {
-    fn memory_growing(&mut self, cur: usize, desired: usize, max: Option<usize>) -> wasmtime::Result<bool> {
+    fn memory_growing(
+        &mut self,
+        cur: usize,
+        desired: usize,
+        max: Option<usize>,
+    ) -> wasmtime::Result<bool> {
         let ok = self.limits.memory_growing(cur, desired, max)?;
         if !ok {
             self.memory_denied = true;
         }
         Ok(ok)
     }
-    fn table_growing(&mut self, cur: usize, desired: usize, max: Option<usize>) -> wasmtime::Result<bool> {
+    fn table_growing(
+        &mut self,
+        cur: usize,
+        desired: usize,
+        max: Option<usize>,
+    ) -> wasmtime::Result<bool> {
         self.limits.table_growing(cur, desired, max)
     }
 }
@@ -51,6 +63,7 @@ const USAGE: &str = "usage: codecage run <plugin.wasm> [options]
        codecage audit [--plugin NAME] [--clear]
        codecage inspect <plugin.wasm>  (lists what the plugin asks the host for)
        codecage hash <plugin.wasm>   (prints the SHA-256 to pin in a policy)
+       codecage --version
 
 options:
   --policy FILE       load limits and grants from a codecage.toml policy file
@@ -84,7 +97,9 @@ fn parse_args() -> Result<RunOpts> {
             i += 1;
             continue;
         }
-        let val = args.get(i + 1).ok_or_else(|| anyhow!("missing value for {}", args[i]))?;
+        let val = args
+            .get(i + 1)
+            .ok_or_else(|| anyhow!("missing value for {}", args[i]))?;
         match args[i].as_str() {
             "--policy" => policy_path = Some(PathBuf::from(val)),
             "--fuel" => cli.fuel = Some(val.parse()?),
@@ -117,14 +132,26 @@ fn parse_args() -> Result<RunOpts> {
         memory_mb: cli.memory_mb.or(pol.limits.memory_mb).unwrap_or(64),
         timeout_ms: cli.timeout_ms.or(pol.limits.timeout_ms).unwrap_or(2000),
         no_fuel: cli.no_fuel.or(pol.limits.no_fuel).unwrap_or(false),
-        max_output_kb: cli.max_output_kb.or(pol.limits.max_output_kb).unwrap_or(1024),
+        max_output_kb: cli
+            .max_output_kb
+            .or(pol.limits.max_output_kb)
+            .unwrap_or(1024),
         dirs: Vec::new(),
         env: Vec::new(),
         sha256: pol.sha256.clone(),
     };
-    for (paths, write) in [(&pol.fs.read, false), (&pol.fs.write, true), (&cli_read, false), (&cli_write, true)] {
+    for (paths, write) in [
+        (&pol.fs.read, false),
+        (&pol.fs.write, true),
+        (&cli_read, false),
+        (&cli_write, true),
+    ] {
         for p in paths {
-            o.dirs.push(AllowDir { host: p.clone(), guest: String::new(), write });
+            o.dirs.push(AllowDir {
+                host: p.clone(),
+                guest: String::new(),
+                write,
+            });
         }
     }
     for name in pol.env.allow.iter().chain(cli_env.iter()) {
@@ -137,7 +164,11 @@ fn parse_args() -> Result<RunOpts> {
     // Assign stable guest paths: one dir -> /data, several -> /data0 /data1 ...
     let n = o.dirs.len();
     for (idx, d) in o.dirs.iter_mut().enumerate() {
-        d.guest = if n == 1 { "/data".into() } else { format!("/data{idx}") };
+        d.guest = if n == 1 {
+            "/data".into()
+        } else {
+            format!("/data{idx}")
+        };
         if !d.host.is_dir() {
             bail!("allowed path is not a directory: {}", d.host.display());
         }
@@ -171,7 +202,11 @@ fn log_event(outcome: &str, detail: &str) {
         .unwrap_or(0);
     let plugin = PLUGIN.get().map(String::as_str).unwrap_or("?");
     let clean = detail.replace(['\t', '\n', '\r'], " ");
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = writeln!(f, "{ts}\t{plugin}\t{outcome}\t{clean}");
     }
 }
@@ -221,10 +256,10 @@ fn run_audit(args: &[String]) -> Result<()> {
             continue;
         }
         let (ts, plugin, outcome, detail) = (parts[0], parts[1], parts[2], parts[3]);
-        if let Some(f) = &filter {
-            if plugin != f {
-                continue;
-            }
+        if let Some(f) = &filter
+            && plugin != f
+        {
+            continue;
         }
         let e = per.entry(plugin.to_string()).or_default();
         match outcome {
@@ -232,7 +267,11 @@ fn run_audit(args: &[String]) -> Result<()> {
             "DENIED" => {
                 e[1] += 1;
                 *cats.entry(category(detail)).or_default() += 1;
-                recent.push((ts.parse().unwrap_or(0), plugin.to_string(), detail.to_string()));
+                recent.push((
+                    ts.parse().unwrap_or(0),
+                    plugin.to_string(),
+                    detail.to_string(),
+                ));
             }
             _ => e[2] += 1,
         }
@@ -242,15 +281,32 @@ fn run_audit(args: &[String]) -> Result<()> {
         println!("no runs recorded yet");
         return Ok(());
     }
-    println!("{:<18} {:>5} {:>5} {:>7} {:>9}", "plugin", "runs", "ok", "denied", "exit!=0");
+    println!(
+        "{:<18} {:>5} {:>5} {:>7} {:>9}",
+        "plugin", "runs", "ok", "denied", "exit!=0"
+    );
     let mut tot = [0usize; 3];
     for (p, c) in &per {
-        println!("{:<18} {:>5} {:>5} {:>7} {:>9}", p, c[0] + c[1] + c[2], c[0], c[1], c[2]);
+        println!(
+            "{:<18} {:>5} {:>5} {:>7} {:>9}",
+            p,
+            c[0] + c[1] + c[2],
+            c[0],
+            c[1],
+            c[2]
+        );
         for i in 0..3 {
             tot[i] += c[i];
         }
     }
-    println!("{:<18} {:>5} {:>5} {:>7} {:>9}", "TOTAL", tot[0] + tot[1] + tot[2], tot[0], tot[1], tot[2]);
+    println!(
+        "{:<18} {:>5} {:>5} {:>7} {:>9}",
+        "TOTAL",
+        tot[0] + tot[1] + tot[2],
+        tot[0],
+        tot[1],
+        tot[2]
+    );
     if !cats.is_empty() {
         println!("\ndenials by limit:");
         for (k, v) in &cats {
@@ -282,15 +338,20 @@ fn load_module(engine: &Engine, path: &str) -> Result<Module> {
         }
     }
     let module = Module::new(engine, &bytes).map_err(|e| anyhow!("could not load {path}: {e}"))?;
-    if std::fs::create_dir_all(&dir).is_ok() {
-        if let Ok(ser) = module.serialize() {
-            let _ = std::fs::write(&cached, ser);
-        }
+    if std::fs::create_dir_all(&dir).is_ok()
+        && let Ok(ser) = module.serialize()
+    {
+        let _ = std::fs::write(&cached, ser);
     }
     Ok(module)
 }
 
-fn build_wasi(dirs: &[AllowDir], env: &[(String, String)], out: &MemoryOutputPipe, err: &MemoryOutputPipe) -> Result<WasiP1Ctx> {
+fn build_wasi(
+    dirs: &[AllowDir],
+    env: &[(String, String)],
+    out: &MemoryOutputPipe,
+    err: &MemoryOutputPipe,
+) -> Result<WasiP1Ctx> {
     let mut b = WasiCtxBuilder::new();
     b.stdout(out.clone()).stderr(err.clone());
     for (k, v) in env {
@@ -317,16 +378,25 @@ fn build_wasi(dirs: &[AllowDir], env: &[(String, String)], out: &MemoryOutputPip
 
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(raw.first().map(String::as_str), Some("--version" | "-V")) {
+        println!("codecage {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if raw.first().map(String::as_str) == Some("inspect") {
         return inspect::run(&raw[1..]);
     }
     if raw.first().map(String::as_str) == Some("hash") {
-        let path = raw.get(1).ok_or_else(|| anyhow!("usage: codecage hash <plugin.wasm>"))?;
+        let path = raw
+            .get(1)
+            .ok_or_else(|| anyhow!("usage: codecage hash <plugin.wasm>"))?;
         println!("{}  {path}", sha256_hex(&std::fs::read(path)?));
         return Ok(());
     }
@@ -344,7 +414,10 @@ fn main() -> Result<()> {
     if let Some(want) = &o.sha256 {
         let got = sha256_hex(&std::fs::read(&o.plugin)?);
         if !got.eq_ignore_ascii_case(want.trim()) {
-            deny(&format!("plugin hash mismatch: policy pins {}, file is {got}", want.trim()));
+            deny(&format!(
+                "plugin hash mismatch: policy pins {}, file is {got}",
+                want.trim()
+            ));
         }
         eprintln!("[codecage] hash pin verified");
     }
@@ -356,7 +429,8 @@ fn main() -> Result<()> {
     let module = load_module(&engine, &o.plugin)?;
 
     let mut linker: Linker<State> = Linker::new(&engine);
-    p1::add_to_linker_sync(&mut linker, |s: &mut State| &mut s.wasi).map_err(anyhow::Error::from)?;
+    p1::add_to_linker_sync(&mut linker, |s: &mut State| &mut s.wasi)
+        .map_err(anyhow::Error::from)?;
 
     let cap = o.max_output_kb * 1024;
     let out_pipe = MemoryOutputPipe::new(cap);
@@ -387,7 +461,10 @@ fn main() -> Result<()> {
         eng.increment_epoch();
         // A plugin blocked inside a host call (e.g. sleep) can't see the epoch; give it a grace period, then hard-stop.
         std::thread::sleep(Duration::from_millis(250));
-        deny(&format!("timeout after {} ms (plugin was blocked in a host call)", timeout.as_millis()));
+        deny(&format!(
+            "timeout after {} ms (plugin was blocked in a host call)",
+            timeout.as_millis()
+        ));
     });
 
     let started = Instant::now();

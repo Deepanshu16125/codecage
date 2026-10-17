@@ -38,12 +38,13 @@ codecage run <plugin.wasm> [options]     run a plugin in the cage
 codecage inspect <plugin.wasm>           list what the plugin asks the host for, without running it
 codecage hash <plugin.wasm>              print the SHA-256 to pin in a policy
 codecage audit [--plugin NAME] [--clear] summarize the audit log (runs, denials by limit)
+codecage --version                       print the version (1.0.0)
 ```
 
 Run options: `--policy FILE`, `--fuel N`, `--memory-mb N`, `--timeout-ms N`, `--no-fuel`, `--max-output-kb N`, `--allow-dir PATH`, `--allow-write-dir PATH`, `--allow-env NAME`.
 The order of precedence is command-line flags, then the policy file, then the defaults.
 
-Exit codes: `0` ok, `1`–`255` the plugin's own exit code (for example, a blocked access it reported), `2` with `[codecage] DENIED: ...` a limit stopped it.
+Exit codes: `0` ok, `1`-`255` the plugin's own exit code (for example, a blocked access it reported), `2` with `[codecage] DENIED: ...` a limit stopped it.
 
 ## Policy file (`codecage.toml`)
 
@@ -100,11 +101,35 @@ The C plugins are built with Zig's clang and wasi-libc: `powershell -File script
 | `scripts\bench.ps1` | `results\bench.csv` and `bench.md`: cold vs warm startup, caged vs native, fuel on vs off |
 | `scripts\report.ps1 [-Fresh]` | `results\report.html`: a one-page report with the tables and charts |
 | `scripts\demo.ps1 [-NoPause] [-OpenReport]` | a narrated, colour-coded live demo |
-| `scripts\dashboard.ps1` | live web dashboard at http://localhost:8765: run any plugin or all of them, change limits, see output, policy, inspection and the audit log (`?autorun=1` runs everything on load) |
+| `scripts\dashboard.ps1 [-Port N] [-NoBrowser]` | live web dashboard at http://localhost:8765 (see below) |
 
 Run all of them with `powershell -ExecutionPolicy Bypass -File <script>`.
 
-Latest results (i7-12700H laptop): **19 / 19** evaluation scenarios behave as expected. The compile cache makes startup **3.1x** faster (29.1 ms cold, 9.3 ms warm). The caged plugin takes **1.42x** native time on primes, and fuel metering costs about **6%** of that.
+### Live dashboard
+
+`powershell -ExecutionPolicy Bypass -File scripts\dashboard.ps1` opens a local page where you can:
+
+- run one plugin, all of them, only the normal ones or only the attacks, with each plugin's policy or with no policy and your own fuel / memory / timeout / no-fuel overrides;
+- watch runs live: every run is its own `codecage` process, so the page never blocks. Up to 3 run at once, running cards show a live timer, and **Stop** (per card) or **Stop all** kills a run (verdict `CANCELLED`);
+- reload the page without losing state (running and finished jobs are kept by the server);
+- see the verdict, reason, fuel, wall time, command, output, policy file, static `inspect` listing and the audit log for each plugin;
+- get a warning (and a confirm before Run all) when a long timeout or no-fuel would let `infinite_loop` / `c_spin` / `sleep_forever` run for the whole timeout. Runs with custom limits are not scored against the policy expectation.
+
+`?autorun=1` runs everything on load. **Stop server** (or Ctrl+C) shuts it down and kills any runs still going.
+
+### Results (v1.0, i7-12700H laptop, 17 Oct 2026)
+
+| Measure | Result |
+|---|---|
+| Tests (`cargo test`) | **26 / 26** pass |
+| Evaluation scenarios (`eval.ps1`) | **19 / 19** behave as expected |
+| Dashboard, Run all in policy mode | **14 / 14** as expected |
+| hello startup, cold / warm (compile cache) | 28.5 ms / 9.4 ms, **3.0x** faster with the cache |
+| primes to 2M: fuel / no-fuel / native | 17.2 ms / 16.3 ms / 12.0 ms |
+| Caged (fuel) vs native | **1.43x** native wall time |
+| Cost of fuel metering | about **5.5%** vs `--no-fuel` |
+
+Times are whole-process medians of 20 runs (`results\bench.md`).
 
 ## Tests and CI
 
@@ -123,6 +148,8 @@ host/            the codecage binary (main.rs, policy.rs, inspect.rs) and tests/
 plugins/         Rust plugins, each with a codecage.toml
 plugins_c/       C plugins, each with a codecage.toml
 demo_data/       sample.txt, the folder plugins may be granted
-scripts/         eval, bench, report, demo, build-c
+scripts/         eval, bench, report, demo, build-c, dashboard
 results/         generated CSV, markdown and HTML
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for the version history.

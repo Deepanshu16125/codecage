@@ -1,1 +1,3 @@
-fn main() { println!("hello from the cage"); }
+fn main() {
+    println!("hello from the cage");
+}

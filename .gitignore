@@ -1,1 +1,7 @@
 target/
+# scratch / local artefacts (the committed results are eval/bench csv+md and report.html)
+results/scratch/
+results/*.tmp
+*.log
+dashboard-audit.log
+.vscode/
