@@ -31,20 +31,25 @@ pre{background:#0b0d13;border:1px solid var(--line);border-radius:8px;padding:10
 h3{margin:22px 0 8px;font-size:16px}table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}
 th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;font-size:12.5px}th{color:var(--muted)}.num{text-align:right}
 .hint{color:var(--muted);font-size:12px}
+.pc .top .rb{margin-left:auto;padding:3px 10px}button.stop{color:var(--deny);border-color:#ff6b6b77}button.stop:hover{border-color:var(--deny)}
+.pc.running{border-color:#7c9cff88}.el{font-variant-numeric:tabular-nums;color:var(--accent);font-weight:600}.match.o{color:var(--muted);font-weight:500}
+.v.CANCELLED{background:#ffffff14;color:#c7cbd6}.warn{flex-basis:100%;color:var(--block);background:#f5a52414;border:1px solid #f5a52455;border-radius:8px;padding:6px 10px;font-size:12.5px}
 </style></head><body>
 <header><div><h1>CodeCage</h1><div class="sub">Live sandbox dashboard: run untrusted plugins and watch what happens</div></div>
 <div class="stats"><div class="stat"><b id="sRuns">0</b><span>runs</span></div><div class="stat"><b id="sOk" style="color:var(--ok)">0</b><span>allowed</span></div>
 <div class="stat"><b id="sBlock" style="color:var(--block)">0</b><span>blocked</span></div><div class="stat"><b id="sDeny" style="color:var(--deny)">0</b><span>denied</span></div>
-<div class="stat"><b id="sMatch">-</b><span>as expected</span></div></div></header>
+<div class="stat"><b id="sMatch">-</b><span id="sMatchL">vs policy expectation</span></div></div></header>
 <main><section>
 <div class="controls">
 <button class="primary" onclick="runSet('all')">Run all</button><button onclick="runSet('benign')">Run normal plugins</button><button onclick="runSet('malicious')">Run attacks</button>
 <label>Mode <select id="mode"><option value="policy">each plugin's own policy</option><option value="none">no policy (defaults only)</option></select></label>
 <label>Fuel <input id="fuel" type="number" placeholder="policy"></label><label>Memory MB <input id="mem" type="number" placeholder="policy"></label>
 <label>Timeout ms <input id="tmo" type="number" placeholder="policy"></label><label><input id="nofuel" type="checkbox"> no fuel</label>
-<button onclick="resetAll()">Clear results</button><button onclick="quit()" title="Stop the local server">Stop server</button>
+<button class="stop" onclick="stopAll()" title="Stop every running or queued plugin">Stop all</button><button onclick="resetAll()">Clear results</button><button onclick="quit()" title="Stop the local server">Stop server</button>
+<div class="warn" id="warn" style="display:none"></div>
 </div>
-<div class="hint" style="margin:-6px 0 12px">Click a card to see its command, live output, policy file and static inspection. Overrides apply on top of the policy (command-line flags win).</div>
+<div class="hint" style="margin:-6px 0 12px">Click a card to see its command, live output, policy file and static inspection. Overrides apply on top of the policy (command-line flags win). Up to 3 plugins run at the same time.</div>
+<div class="hint" id="customHint" style="display:none;margin:-6px 0 12px;color:var(--block)">Custom limits: results are not scored against the policy expectation. With no policy, linecount / c_wordcount get BLOCKED because no folder is granted to them, so that is normal.</div>
 <div class="grid" id="grid"></div>
 <h3>Run history</h3>
 <table><thead><tr><th>#</th><th>Plugin</th><th>Mode</th><th>Verdict</th><th>Expected</th><th>Reason</th><th class="num">Fuel</th><th class="num">ms</th></tr></thead><tbody id="hist"></tbody></table>
@@ -54,53 +59,87 @@ th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;font-
 <aside class="panel" id="panel"><h2>Pick a plugin</h2><div class="hint">Run something, then click its card to see what CodeCage did.</div></aside>
 </main>
 <script>
-let plugins=[],results={},history=[],sel=null,tab='output',busy=false;
+let plugins=[],jobs={},full={},queue=[],starting=0,sel=null,tab='output',stopped=false,lastPanelKey='';
+const CONC=3;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const vcls=v=>['OK','DENIED','BLOCKED','LEAKED'].includes(v)?v:(v==='running'?'run':'other');
+const vcls=v=>['OK','DENIED','BLOCKED','LEAKED','CANCELLED'].includes(v)?v:(v==='running'||v==='queued'?'run':'other');
+const secs=ms=>(ms=Math.round(ms))<1000?ms+' ms':ms<10000?(ms/1000).toFixed(1)+' s':ms<120000?Math.round(ms/1000)+' s':Math.floor(ms/60000)+' min '+Math.round(ms%60000/1000)+' s';
 async function api(p){const r=await fetch(p);return r.json()}
-async function init(){plugins=await api('/api/plugins');drawGrid();loadAudit();if(new URLSearchParams(location.search).get('autorun')){await runSet('all');select('c_steal')}}
+function absorb(j){j.t0=performance.now()-(j.ms||0);const o=jobs[j.id];if(o&&o.output!==undefined&&j.output===undefined&&j.status==='done')j.output=o.output;jobs[j.id]=j}
+function latest(name){let b=null;for(const j of Object.values(jobs))if(j.name===name&&(!b||j.id>b.id))b=j;return b}
+function cur(name){return queue.includes(name)?{verdict:'queued'}:latest(name)}
+function runningCount(){return Object.values(jobs).filter(j=>j.status==='running').length}
+function active(){return runningCount()+starting+queue.length>0}
+async function init(){plugins=await api('/api/plugins');(await api('/api/jobs')).forEach(absorb);redraw();updWarn();loadAudit();
+  setInterval(tick,200);loop();
+  if(new URLSearchParams(location.search).get('autorun')){runSet('all',true)}}
+async function loop(){if(stopped)return;if(runningCount()+starting>0){try{await poll()}catch(e){}}pump();setTimeout(loop,500)}
+async function poll(){const before={};for(const j of Object.values(jobs))before[j.id]=j.status;
+  const js=await api('/api/jobs');let changed=false,finished=false;
+  for(const j of js){if(before[j.id]!==j.status){changed=true;if(j.status==='done')finished=true}absorb(j)}
+  if(changed)redraw();if(finished&&!active())loadAudit()}
+function pump(){let n=0;while(queue.length&&runningCount()+starting<CONC){const name=queue.shift();start(name);n++}if(n)drawGrid()}
+async function start(name){starting++;try{const r=await api('/api/run?'+qs(name));if(r.id)absorb(r)}finally{starting--}redraw();if(!sel)select(name)}
+function tick(){document.querySelectorAll('[data-el]').forEach(e=>{const j=jobs[e.dataset.el];if(j&&j.status==='running')e.textContent=secs(performance.now()-j.t0)})}
+function redraw(){drawGrid();drawHist();stats();if(sel){const l=latest(sel);const k=l?l.id+l.status:'';if(k!==lastPanelKey)select(sel)}}
 function drawGrid(){
-  $('grid').innerHTML=plugins.map(p=>{const r=results[p.name];let res='<span class="hint">not run yet</span>';
-    if(r&&r.verdict==='running')res='<span class="spin"></span><span class="v run">running</span>';
-    else if(r){const m=$('mode').value==='policy'&&!overrides()?(r.verdict===p.expected?'<span class="match y">&#10003; expected</span>':'<span class="match n">&#10007; expected '+esc(p.expected)+'</span>'):'';
-      res=`<span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span><span>${r.ms} ms</span>${m}`}
-    return `<div class="pc ${sel===p.name?'sel':''}" onclick="select('${p.name}')"><div class="top"><span class="nm">${esc(p.name)}</span>
-      <button style="margin-left:auto;padding:3px 10px" onclick="event.stopPropagation();runOne('${p.name}')" ${busy?'disabled':''}>Run</button></div>
+  $('grid').innerHTML=plugins.map(p=>{const r=cur(p.name);let res='<span class="hint">not run yet</span>',btn=`<button class="rb" onclick="event.stopPropagation();runOne('${p.name}')">Run</button>`;
+    if(r&&r.verdict==='queued'){res='<span class="v run">queued</span>';btn=`<button class="rb stop" onclick="event.stopPropagation();unqueue('${p.name}')">Stop</button>`}
+    else if(r&&r.status==='running'){res=`<span class="spin"></span><span class="v run">running</span><span class="el" data-el="${r.id}">${secs(performance.now()-r.t0)}</span>`;
+      btn=`<button class="rb stop" onclick="event.stopPropagation();stopJob(${r.id})">Stop</button>`}
+    else if(r){let m;if(!r.custom)m=r.verdict===p.expected?'<span class="match y">&#10003; expected</span>':'<span class="match n">&#10007; expected '+esc(p.expected)+'</span>';
+      else m=r.verdict===p.expected?'<span class="match o" title="custom limits">same as policy</span>':'<span class="match o" title="custom limits: not compared">policy run: '+esc(p.expected)+'</span>';
+      res=`<span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span><span>${secs(r.ms)}</span>${m}`}
+    return `<div class="pc ${sel===p.name?'sel':''} ${r&&r.status==='running'?'running':''}" onclick="select('${p.name}')"><div class="top"><span class="nm">${esc(p.name)}</span>${btn}</div>
       <div class="tags"><span class="pill">${p.lang}</span><span class="pill ${p.kind==='malicious'?'mal':'ben'}">${p.kind}</span></div><div class="desc">${esc(p.description)}</div><div class="res">${res}</div></div>`}).join('')}
 function overrides(){return $('fuel').value||$('mem').value||$('tmo').value||$('nofuel').checked}
-function qs(name){const u=new URLSearchParams({name,mode:$('mode').value});if($('fuel').value)u.set('fuel',$('fuel').value);
+function custom(){return $('mode').value==='none'||!!overrides()}
+function label(){return ($('mode').value==='policy'?'policy':'no policy')+(overrides()?' + overrides':'')}
+function qs(name){const u=new URLSearchParams({name,mode:$('mode').value,label:label()});if($('fuel').value)u.set('fuel',$('fuel').value);
   if($('mem').value)u.set('memory-mb',$('mem').value);if($('tmo').value)u.set('timeout-ms',$('tmo').value);if($('nofuel').checked)u.set('nofuel','1');return u}
-async function runOne(name,batch){
-  if(busy&&!batch)return; if(!batch){busy=true}
-  results[name]={verdict:'running'};drawGrid();
-  const r=await api('/api/run?'+qs(name));results[name]=r;
-  history.unshift({...r,mode:$('mode').value+(overrides()?' + overrides':'')});drawHist();stats();
-  if(!batch){busy=false;loadAudit()} drawGrid(); if(sel===name||!sel){select(name)}
-}
-async function runSet(kind){if(busy)return;busy=true;drawGrid();
-  for(const p of plugins.filter(p=>kind==='all'||p.kind===kind)){await runOne(p.name,true)}
-  busy=false;drawGrid();loadAudit()}
-function stats(){const v=Object.values(results).filter(r=>r.verdict&&r.verdict!=='running');
-  $('sRuns').textContent=history.length;$('sOk').textContent=v.filter(r=>r.verdict==='OK').length;
-  $('sBlock').textContent=v.filter(r=>r.verdict==='BLOCKED').length;$('sDeny').textContent=v.filter(r=>r.verdict==='DENIED').length;
-  const m=v.filter(r=>r.verdict===r.expected).length;$('sMatch').textContent=v.length?`${m}/${v.length}`:'-'}
-function drawHist(){$('hist').innerHTML=history.map((r,i)=>`<tr><td>${history.length-i}</td><td>${esc(r.name)}</td><td>${esc(r.mode)}</td>
-  <td><span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span></td><td>${esc(r.expected)}</td><td>${esc(r.reason)}</td>
+function busyName(n){const r=cur(n);return r&&(r.verdict==='queued'||r.status==='running')}
+function runOne(name){if(busyName(name))return;start(name)}
+function longRun(){const t=+$('tmo').value||0,nf=$('nofuel').checked;return t>60000||(nf&&t>10000)}
+function updWarn(){const t=+$('tmo').value||0,nf=$('nofuel').checked,w=$('warn');
+  if(longRun()){w.style.display='';w.textContent=`\u26a0 ${nf?'infinite_loop / c_spin / sleep_forever':'sleep_forever'} will run until this timeout (${secs(t)} each). Use Stop to end one early.`}else w.style.display='none';
+  $('customHint').style.display=custom()?'':'none'}
+function runSet(kind,noAsk){const list=plugins.filter(p=>kind==='all'||p.kind===kind).map(p=>p.name).filter(n=>!busyName(n));
+  if(!noAsk&&kind!=='benign'&&longRun()&&!confirm(`Timeout is ${secs(+$('tmo').value)}${$('nofuel').checked?' with no fuel':''}.\n\nSome attack plugins (infinite_loop, c_spin, sleep_forever) will run for the whole timeout. ${CONC} plugins run at a time and you can press Stop on any card.\n\nContinue?`))return;
+  queue.push(...list);pump();drawGrid()}
+function unqueue(n){queue=queue.filter(x=>x!==n);drawGrid()}
+async function stopJob(id){await api('/api/cancel?id='+id);await poll();loadAudit()}
+async function stopAll(){queue=[];drawGrid();await api('/api/cancel?all=1');await poll();loadAudit()}
+function done(){return Object.values(jobs).filter(j=>j.status==='done')}
+function stats(){const d=done();const lat=plugins.map(p=>latest(p.name)).filter(j=>j&&j.status==='done');
+  $('sRuns').textContent=d.length;$('sOk').textContent=lat.filter(r=>r.verdict==='OK').length;
+  $('sBlock').textContent=lat.filter(r=>r.verdict==='BLOCKED').length;$('sDeny').textContent=lat.filter(r=>r.verdict==='DENIED').length;
+  const pol=lat.filter(r=>!r.custom),m=pol.filter(r=>r.verdict===r.expected).length,s=$('sMatch');
+  if(pol.length){s.textContent=`${m}/${pol.length}`;s.style.color=m===pol.length?'var(--ok)':'var(--deny)';s.style.fontSize=''}
+  else{s.textContent=lat.length?'n/a':'-';s.style.color='';s.style.fontSize=''}
+  $('sMatchL').textContent=lat.some(r=>r.custom)?(pol.length?`vs policy (${lat.length-pol.length} custom)`:'custom limits'):'vs policy expectation'}
+function drawHist(){const d=done().sort((a,b)=>b.id-a.id);$('hist').innerHTML=d.map(r=>`<tr><td>${r.id}</td><td>${esc(r.name)}</td><td>${esc(r.label)}</td>
+  <td><span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span></td><td>${esc(r.expected)}${r.custom?' <span class="hint">(policy)</span>':''}</td><td>${esc(r.reason)}</td>
   <td class="num">${r.fuel??''}</td><td class="num">${r.ms}</td></tr>`).join('')}
-async function select(name){sel=name;drawGrid();const p=plugins.find(x=>x.name===name),r=results[name];
+async function select(name){sel=name;drawGrid();const p=plugins.find(x=>x.name===name);let r=latest(name);lastPanelKey=r?r.id+r.status:'';
   let body='';
-  if(tab==='output')body=r&&r.verdict!=='running'?`<div class="kv"><div>Verdict</div><div><span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span></div>
+  if(tab==='output'){
+    if(r&&r.status==='done'&&r.output===undefined){const f=await api('/api/job?id='+r.id);absorb(f);r=f}
+    if(r&&r.status==='running')body=`<div class="kv"><div>Status</div><div><span class="spin"></span> <span class="v run">running</span> <span class="el" data-el="${r.id}">${secs(performance.now()-r.t0)}</span></div>
+      <div>Command</div><div><code>${esc(r.command)}</code></div></div><button class="stop" onclick="stopJob(${r.id})">Stop this run</button>
+      <div class="hint" style="margin-top:8px">Output appears when the run ends. CodeCage stops it at the fuel, memory or timeout limit.</div>`;
+    else if(r)body=`<div class="kv"><div>Verdict</div><div><span class="v ${vcls(r.verdict)}">${esc(r.verdict)}</span>${r.custom?' <span class="hint">(custom limits)</span>':''}</div>
     <div>Reason</div><div>${esc(r.reason||'-')}</div><div>Exit code</div><div>${r.exit}</div><div>Fuel used</div><div>${r.fuel??'-'}</div>
-    <div>Wall time</div><div>${r.ms} ms</div><div>Command</div><div><code>${esc(r.command)}</code></div></div><pre>${esc(r.output)}</pre>`
-    :'<div class="hint">Not run yet. Press Run on the card.</div>';
+    <div>Wall time</div><div>${r.ms} ms</div><div>Command</div><div><code>${esc(r.command)}</code></div></div><pre>${esc(r.output)}</pre>`;
+    else body='<div class="hint">Not run yet. Press Run on the card.</div>'}
   if(tab==='policy')body='<pre>'+esc((await api('/api/policy?name='+name)).text)+'</pre>';
   if(tab==='inspect')body='<pre>'+esc((await api('/api/inspect?name='+name)).text)+'</pre>';
   $('panel').innerHTML=`<h2>${esc(name)}</h2><div class="hint">${esc(p.description)}</div>
    <div class="tabs">${['output','policy','inspect'].map(t=>`<button class="${tab===t?'on':''}" onclick="tab='${t}';select('${name}')">${t==='output'?'Result & output':t==='policy'?'Policy file':'Inspect (static)'}</button>`).join('')}
    <button onclick="runOne('${name}')" style="margin-left:auto">Run again</button></div>${body}`}
 async function loadAudit(clear){$('audit').textContent=(await api('/api/audit'+(clear?'?clear=1':''))).text}
-function resetAll(){results={};history=[];drawGrid();drawHist();stats()}
-async function quit(){await fetch('/api/quit');document.body.innerHTML='<p style="padding:40px">Dashboard server stopped. You can close this tab.</p>'}
+async function resetAll(){await api('/api/clear');for(const j of Object.values(jobs))if(j.status==='done')delete jobs[j.id];redraw();if(sel)select(sel)}
+async function quit(){stopped=true;queue=[];await fetch('/api/quit');document.body.innerHTML='<p style="padding:40px">Dashboard server stopped (any running plugins were stopped too). You can close this tab.</p>'}
+['mode','fuel','mem','tmo','nofuel'].forEach(id=>{$(id).addEventListener('input',updWarn);$(id).addEventListener('change',updWarn)});
 init();
 </script></body></html>
